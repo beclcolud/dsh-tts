@@ -405,7 +405,59 @@ def _edge_silence(a, sr, level: float | None = None):
     return (int(idx[0]) * hop) / sr, (len(a) - (int(idx[-1]) * hop + win)) / sr
 
 
-def join_with_target(left, right, sr, target_ms: float):
+def _noise_rms(left, right, sr, win_ms: float = 100.0) -> float:
+    """估这段录音的底噪：在两端里找最安静的一个窗口，取它的 RMS。
+
+    人声素材几乎都有底噪；纯 0 的间隙和底噪放一起，会明显听成"断了一下"。
+    """
+    import numpy as np
+    n = max(2, int(win_ms / 1000.0 * sr))
+    floors = []
+    for c in (left, right):
+        if len(c) < n:
+            continue
+        for start in range(0, len(c) - n + 1, max(1, n // 2)):
+            floors.append(float(np.sqrt(np.mean(c[start:start + n] ** 2))))
+    if not floors:
+        return 0.0
+    floors.sort()
+    # 取最安静的一批窗口的**中位数**：单个窗口正好落在纯零上（模型偶尔会输出
+    # 数字静音）不会把整段估计拖成 0，那样补出来的还是纯零。
+    k = max(1, len(floors) // 10)
+    floor = float(np.median(floors[:k]))
+    if floor < 1e-5:
+        # 整段都贴着零，说明素材本身就干净：按信号电平的 -50dB 造一个底噪
+        sig = float(np.sqrt(np.mean(np.concatenate([left, right]) ** 2))) if len(left) + len(right) else 0.0
+        floor = max(sig * 0.003, 1e-6)
+    return floor
+
+
+def _comfort_noise(n: int, sr: int, rms: float):
+    """补一段和底噪同电平的柔和噪声，用来代替纯 0。
+
+    直接铺白噪声会刺耳，做一次轻度低通压掉高频，再按测得的底噪电平缩放，
+    两端各做 8ms 淡入淡出，避免噪声突然开始/结束产生的咔哒。
+    """
+    import numpy as np
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    if rms <= 0:
+        return np.zeros(n, dtype=np.float32)
+    rng = np.random.default_rng(20261117)
+    w = rng.standard_normal(n).astype(np.float32)
+    for i in range(1, n):
+        w[i] = 0.5 * w[i] + 0.5 * w[i - 1]
+    cur = float(np.sqrt(np.mean(w ** 2)) + 1e-12)
+    w *= rms / cur
+    fade = max(1, int(0.008 * sr))
+    if n > 2 * fade:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        w[:fade] *= ramp
+        w[-fade:] *= ramp[::-1]
+    return w
+
+
+def join_with_target(left, right, sr, target_ms: float, pad_noise: bool = True):
     """把接缝的停顿规整到一个目标长度，而不是"模型给多少算多少"。
 
     做法：量出左边尾部、右边头部的真实静音，和目标的差值直接补零或裁掉。
@@ -420,7 +472,8 @@ def join_with_target(left, right, sr, target_ms: float):
         joined = np.concatenate([left, right])
     elif cur < want:
         pad = int(round((want - cur) * sr))
-        joined = np.concatenate([left, np.zeros(pad, dtype=np.float32), right])
+        floor = _noise_rms(left, right, sr) if pad_noise else 0.0
+        joined = np.concatenate([left, _comfort_noise(pad, sr, floor), right])
     else:
         cut = int(round((cur - want) / 2.0 * sr))
         joined = np.concatenate([left[: max(1, len(left) - cut)], right[min(len(right) - 1, cut):]])
@@ -503,7 +556,7 @@ SEAM_TARGET_FALLBACK = 160
 
 def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1,
                     do_trim: bool = True, seam: str | None = None, report: dict | None = None,
-                    seam_targets: dict | None = None):
+                    seam_targets: dict | None = None, pad_noise: bool = True):
     """Synthesize sentence by sentence so the subtitle timeline is exact.
 
     seam="current"：原策略，保留 25ms 边距，只有空隙 >120ms 才做 10ms 交叉淡化。
@@ -562,7 +615,7 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         mark = next((c for c in reversed(prev_text.strip()) if c in targets), "")
         if policy == "target":
             want = float(targets.get(mark, SEAM_TARGET_FALLBACK))
-            audio, before_s, _ = join_with_target(audio, nxt, sr, want)
+            audio, before_s, _ = join_with_target(audio, nxt, sr, want, pad_noise=pad_noise)
             # join_with_target 里 cur 是秒；达成值就是目标值（补零/裁剪后按构造精确）
             seams.append({"i": i, "after": prev_text[-8:], "mark": mark,
                           "before_ms": round(before_s * 1000, 1), "after_ms": round(want, 1),
@@ -815,7 +868,8 @@ def handle(req: str, body: dict) -> dict:
         audio, sr, bounds = synth_sentences(kind, body["text"], voice, takes=int(body.get("takes", 1)),
                                            do_trim=bool(body.get("trim", True)),
                                            seam=body.get("seam"), report=seam_report,
-                                           seam_targets=body.get("seam_target_ms"))
+                                           seam_targets=body.get("seam_target_ms"),
+                                           pad_noise=bool(body.get("seam_noise", True)))
         stem = body.get("stem") or ("tts-%d" % int(time.time()))
         target = Path(body["out_dir"]).expanduser() if body.get("out_dir") else out_dir()
         target.mkdir(parents=True, exist_ok=True)

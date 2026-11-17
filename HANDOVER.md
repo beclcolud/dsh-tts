@@ -132,6 +132,7 @@ dsh-tts/
 ```
 逐句合成 → 两端紧裁 edge_keep_ms(25) → fade_ms(3) 淡入淡出
 → 句间响度对齐(±6dB) → 按句末标点把接缝停顿规整到 seamPauses（默认 180/140ms）
+   → 补出来的停顿填同电平柔和噪声（测得的自然底噪约 -60~-66 dBFS）
 → 整段按 RMS −20 dBFS 归一（峰值 0.95 兜底）→ 按实际起始时间重算字幕
 ```
 
@@ -374,6 +375,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 句子级拼回 | `server/tts_server.py` + `lib/index.js` | `say` 现在额外写 `<stem>.bounds.json`（每句在成品里的**采样**起止点）；新增 `splice` 端点按样本区间替换某一句，电平对齐到被替换区间，字幕与边界按实际差值顺延。`voiceover_retakes` 传 `use=N`+`full=<整段>` 即调用。老音频没 bounds 会明确拒绝并说明原因 |
 | 错误码分级 | `server/tts_server.py` | 预期内的拒绝（缺文件 / 序号越界 / 采样率不符）返回 400 + 人话原因，不再和"服务真崩了"一起变成裸 500 |
 | 新增拼接回归 | `scripts/test_splice.py` | 自己拉起服务、用合成正弦波当素材，不需要 GPU、不需要模型；覆盖替换、时长、字幕顺延、以及三条拒绝路径 |
+| 停顿不填纯零 | `server/tts_server.py` | 规整停顿需要"补"时，原来补的是纯 0（实测 -240 dBFS）。模型自己的间隙是 -60~-66 dBFS，于是插入段听起来像"断了一下"。现在改为按两端实测底噪生成同电平柔和噪声（轻度低通 + 8ms 淡入淡出），实测填到 -66.5 dBFS，与自然间隙一致 |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。

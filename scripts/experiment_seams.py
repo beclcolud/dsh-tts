@@ -100,11 +100,20 @@ def silence_runs(wav: Path, min_ms=50.0, thr_ratio=0.03, boundaries=None):
     if start is not None:
         spans.append((start * 0.005, (len(rms) - start) * 0.005))
 
-    at_boundary = []
+    at_boundary, level_db = [], []
     for b in (boundaries or []):
-        hit = next((d for (s0, d) in spans if s0 <= b <= s0 + d), None)
-        at_boundary.append(round(hit * 1000) if hit is not None else 0)
-    return [round(x * 1000) for x in runs if x * 1000 >= min_ms], sr, at_boundary
+        hit = next(((s0, d) for (s0, d) in spans if s0 <= b <= s0 + d), None)
+        at_boundary.append(round(hit[1] * 1000) if hit else 0)
+        if hit:
+            i0 = max(0, int(hit[0] / 0.005))
+            i1 = min(len(rms), int((hit[0] + hit[1]) / 0.005))
+            seg = rms[i0:i1]
+            # 用最小窗口电平：整段取平均会把插入的纯零稀释掉，看不出有没有"洞"
+            lo = float(seg.min()) if len(seg) else 0.0
+            level_db.append(round(20 * np.log10(lo + 1e-12), 1))
+        else:
+            level_db.append(None)
+    return [round(x * 1000) for x in runs if x * 1000 >= min_ms], sr, at_boundary, level_db
 
 
 def main() -> int:
@@ -114,6 +123,8 @@ def main() -> int:
     ap.add_argument("--libs", default=str(ROOT.parent / "_tts_probe" / "pylibs"))
     ap.add_argument("--voice", default="新闻联播音色", help="音色库名或预设名；不同音色的接缝表现差别很大")
     ap.add_argument("--bank-dir", default=str(ROOT.parent / "配音" / "voicebank"))
+    ap.add_argument("--no-noise", action="store_true",
+                    help="补静音时用纯 0（旧行为），用来对比数字静音和底噪填充")
     ap.add_argument("--pauses", default=None,
                     help="覆盖停顿时长（JSON，键是句末标点），例如 {\"。\": 260}")
     args = ap.parse_args()
@@ -170,6 +181,8 @@ def main() -> int:
             print("音色：%s（预设）" % args.voice)
 
         extra = {}
+        if args.no_noise:
+            extra["seam_noise"] = False
         if args.pauses:
             extra["seam_target_ms"] = json.loads(args.pauses)
             print("停顿覆盖：%s" % extra["seam_target_ms"])
@@ -181,10 +194,12 @@ def main() -> int:
             wav = Path(r["wav"])
             bounds = json.loads(Path(r["bounds"]).read_text(encoding="utf-8"))
             starts = [s["start"] / bounds["sr"] for s in bounds["sentences"][1:]]
-            runs, sr, at_b = silence_runs(wav, boundaries=starts)
+            runs, sr, at_b, lv_db = silence_runs(wav, boundaries=starts)
             tag = "A-现状" if label == "A" else "B-按标点"
             if label == "B" and args.pauses:
                 tag += "-自定义"
+            if label == "B" and args.no_noise:
+                tag += "-纯零"
             mp3 = out / ("接缝%s-%s.mp3" % (tag, args.voice))
             try:
                 subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav), "-c:a", "libmp3lame",
@@ -194,7 +209,7 @@ def main() -> int:
                 mp3 = wav
             results[label] = {"seam_report": json.loads(Path(r["seams"]).read_text(encoding="utf-8")),
                               "wav": str(wav), "mp3": str(mp3), "dur": r["dur"],
-                              "silences": runs, "at_boundary": at_b}
+                              "silences": runs, "at_boundary": at_b, "level_db": lv_db}
     finally:
         try:
             call("shutdown")
@@ -222,7 +237,10 @@ def main() -> int:
                 how = "交叠 %.1fms" % s["overlap_ms"] if s["overlap_ms"] else "未交叠（空隙没到 120ms 阈值）"
             print("    接缝%d  调整前 %5.1fms → 调整后 %5.1fms  [%s]  ← 前句结尾「%s」"
                   % (s["i"], s["before_ms"], s["after_ms"], how, s["after"]))
-            print("           波形实测该边界静音: %dms" % (d["at_boundary"][k] if k < len(d["at_boundary"]) else -1))
+            lv = d["level_db"][k] if k < len(d["level_db"]) else None
+            print("           波形实测该边界静音: %dms，电平 %s dBFS"
+                  % (d["at_boundary"][k] if k < len(d["at_boundary"]) else -1,
+                     ("%.1f" % lv) if lv is not None else "无"))
         print("    全部静音段(ms): %s" % (d["silences"] or "无"))
         print()
 
