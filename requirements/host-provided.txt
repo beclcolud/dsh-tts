@@ -1,0 +1,15 @@
+# 由宿主 Python 环境提供，dsh-tts 不自己装、也不该覆盖。
+# 本机实测来源：ComfyUI 便携包自带的 site-packages。
+# 换机器时这些必须已经存在，Bootstrap 会逐个探测并给出缺哪个。
+#
+# 为什么不能由我们装：
+#   这些包和宿主共用同一份二进制（torch 的 CUDA 运行时、numpy 的 ABI），
+#   再装一份到 libs 目录会和宿主互相遮蔽，出现"同一个进程两套 torch"的诡异崩溃。
+#
+torch>=2.4            # 实测 2.14.1+cu130（本机）；有 GPU 就必须是 CUDA/ROCm 构建
+torchaudio>=2.4       # 实测 2.11.0+cu130
+torchvision>=0.19     # 实测 0.29.1+cu130（qwen 不直接用，但 audio-separator/onnx2torch 会碰）
+numpy>=2.1            # 实测 2.5.4；librosa 1.0.1 要求 >=2.1
+scipy>=1.15           # 实测 1.18.1
+sentencepiece>=0.2    # 实测 0.2.2
+einops>=0.7           # 实测 0.8.2

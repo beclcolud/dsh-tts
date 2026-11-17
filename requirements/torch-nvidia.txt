@@ -1,0 +1,12 @@
+# NVIDIA GPU —— 只有在你选择"自建环境、torch 也由我们装"时才用这个文件。
+#
+# 注意：不固定精确版本。不同 CUDA 版本、不同平台的可用 wheel 集合不一样，
+# 写死一个版本号反而会在某些机器上装不到。Bootstrap 会按探测到的 CUDA 选择
+# 对应的 extra-index-url，再装 >= 下限的最新可用版本。
+#
+# 手动装法（CUDA 13.0 为例）：
+#   pip install --extra-index-url https://download.pytorch.org/whl/cu130 torch torchaudio torchvision
+# CUDA 12.4 换成 cu124，12.1 换成 cu121。
+torch>=2.4
+torchaudio>=2.4
+torchvision>=0.19

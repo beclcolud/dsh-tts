@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-11-17",
+  "note": "只做清单与校验，不自动下载。校验查『文件存在 + 字节数一致』，能挡住下载中断导致的半截模型；不做SHA256（11G 全量哈希太慢，需要时用 --hash）。",
+  "models": [
+    {
+      "key": "base",
+      "required": true,
+      "role": "克隆音色（实际主力）",
+      "dir": "Qwen3-TTS-0.6B-Base",
+      "bytes": 2516108987,
+      "keyFile": "model.safetensors",
+      "keyFileBytes": 1829344272,
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "model.safetensors",
+        "speech_tokenizer/config.json"
+      ]
+    },
+    {
+      "key": "custom",
+      "required": true,
+      "role": "预设音色",
+      "dir": "Qwen3-TTS-0.6B-CustomVoice",
+      "bytes": 2498391329,
+      "keyFile": "model.safetensors",
+      "keyFileBytes": 1811626576,
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "model.safetensors",
+        "speech_tokenizer/config.json"
+      ]
+    },
+    {
+      "key": "asr",
+      "required": true,
+      "role": "质检回读 / 反听字幕",
+      "dir": "Qwen3-ASR-0.6B",
+      "bytes": 1880622126,
+      "keyFile": "model.safetensors",
+      "keyFileBytes": 1876091704,
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "chat_template.json",
+        "model.safetensors"
+      ]
+    },
+    {
+      "key": "design",
+      "required": false,
+      "role": "中文描述造音色（1.7B，比其他模型慢很多）",
+      "dir": "Qwen3-TTS-1.7B-VoiceDesign",
+      "bytes": 4520166764,
+      "keyFile": "model.safetensors",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "model.safetensors"
+      ]
+    },
+    {
+      "key": "custom17b",
+      "required": false,
+      "deprecated": true,
+      "role": "已放弃，配置里不引用，可删（4.3G）",
+      "dir": "Qwen3-TTS-1.7B-CustomVoice",
+      "bytes": 4520222456
+    }
+  ],
+  "uvr": {
+    "required": false,
+    "role": "人声分离（克隆音色时用）",
+    "dir": "_tts_probe/uvr_models",
+    "note": "audio-separator 会在首次分离时自行下载 onnx 模型。本机已有 Kim_Vocal_2.onnx（62MB），而 config 里写的 UVR-MDX-NET-Voc_FT.onnx 不在本地，会用默认模型下载。"
+  },
+  "downloadHints": {
+    "huggingface": "https://huggingface.co/Qwen  目录名即仓库名",
+    "modelscope": "https://modelscope.cn/models/Qwen  （国内更快）",
+    "hfMirror": "https://hf-mirror.com  （设置 HF_ENDPOINT 即可）"
+  }
+}

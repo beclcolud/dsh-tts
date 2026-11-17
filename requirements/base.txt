@@ -1,0 +1,51 @@
+# dsh-tts 核心依赖（我们自己装进 libs 目录的那一层）
+# 生成依据：2026-11-17 在真机上调通的环境，逐包 pin 到实际生效版本。
+#
+# 不在这里的东西：
+#   torch / torchaudio / torchvision / numpy / scipy / sentencepiece / einops
+#     -> 由宿主环境提供（本机是 ComfyUI 便携包），见 host-provided.txt
+#   transformers
+#     -> 单列，因为它有硬冲突，见 transformers-4.57.3.txt / transformers-4.57.6.txt
+#   nagisa
+#     -> 装不了（缺 dynet_config），由 Bootstrap 打一个 shim，见 requirements/README.md
+#   gradio / julius / ml_collections / beartype / diffq_fixed
+#     -> 上游包声明了，但实际代码路径用不到，装了只会拖一堆重依赖。见 README 里的"声明但不需要"。
+
+accelerate==1.15.0
+audio-separator==0.48.0
+audioop-lts==0.2.2
+audioread==3.1.0
+cffi==2.1.1
+cloudpickle==3.1.2
+decorator==5.3.1
+filelock==4.2.10
+flask==3.1.3
+huggingface-hub==0.36.2
+joblib==1.6.0
+lazy-loader==0.6
+librosa==1.0.1
+llvmlite==0.50.0
+ml-dtypes==0.6.0
+msgpack==1.2.4
+numba==0.68.1
+onnx==1.23.2
+onnx2torch==1.5.15
+onnxruntime==1.32.0
+platformdirs==4.14.5
+pooch==1.9.0
+protobuf==7.36.2
+psutil==7.2.2
+pydub==0.25.1
+pytz==2026.6
+pyyaml==6.0.3
+qwen-asr==0.0.6
+qwen-omni-utils==0.0.9
+qwen-tts==0.1.1
+regex==2026.11.9
+safetensors==0.8.0
+six==1.17.0
+soundfile==0.14.0
+soxr==1.1.0
+soynlp==0.0.493
+standard-aifc==3.13.0
+tokenizers==0.22.2

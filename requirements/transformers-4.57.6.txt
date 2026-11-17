@@ -1,0 +1,11 @@
+# transformers 的 B 方案：4.57.6
+#
+# 这是 qwen-asr 声明要的版本；如果它能同时满足 TTS 和 ASR，依赖图就干净了，
+# 不需要再放假元数据。
+#
+# 本机尚未验证过这个组合的 TTS 链路。Bootstrap 的默认策略是
+# "先试 B，自检不过自动回退 A"（--transformers auto）。
+transformers==4.57.6
+tokenizers==0.22.2
+safetensors==0.8.0
+huggingface-hub==0.36.2

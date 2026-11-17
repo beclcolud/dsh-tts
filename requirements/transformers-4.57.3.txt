@@ -1,0 +1,12 @@
+# transformers 的 A 方案：4.57.3
+#
+# 背景：qwen-tts 0.1.1 声明 transformers==4.57.3，qwen-asr 0.0.6 声明 ==4.57.6。
+# 两个包的要求互斥，依赖图在形式上是无解的。
+#
+# 本机实测：这个组合能用（TTS 出声 + ASR 回读相似度 0.989）。
+# 但 pip 会因为 qwen-asr 的声明报冲突，所以 Bootstrap 会额外放一份 4.57.6 的
+# dist-info 元数据骗过检查（代码仍是 4.57.3）。这一步是显式的，不再是玄学。
+transformers==4.57.3
+tokenizers==0.22.2
+safetensors==0.8.0
+huggingface-hub==0.36.2

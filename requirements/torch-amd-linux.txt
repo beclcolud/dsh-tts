@@ -1,0 +1,11 @@
+# AMD GPU + Linux（ROCm）—— 只有"自建环境"时用。
+#
+# 现实约束：PyTorch 的 ROCm 构建**只发布 Linux 版**。
+# Windows + AMD 显卡目前没有官方 ROCm wheel，PyTorch 官方也不提供；
+# 那条路只能退到 CPU（慢），或者用 torch-directml（实验性，本方案不支持）。
+#
+# ROCm 版本要和驱动匹配，常见是 rocm6.x：
+#   pip install --extra-index-url https://download.pytorch.org/whl/rocm6.2 torch torchaudio torchvision
+torch>=2.4
+torchaudio>=2.4
+torchvision>=0.19

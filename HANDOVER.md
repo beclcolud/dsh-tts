@@ -148,11 +148,17 @@ dsh-tts/
 E:\<工作区>\ComfyUI\ComfyUI_windows_portable\python_embeded\python.exe
 ```
 
-额外库装在 `_tts_probe/pylibs`（由 `libs` 配置注入 `sys.path`）：transformers 4.57.6、qwen-tts 0.1.1、qwen-asr 0.0.6、librosa、soundfile、audio-separator 0.48。
+额外库装在 `_tts_probe/pylibs`（由 `libs` 配置注入 `sys.path`）：38 个包，逐包 pin 在 `requirements/base.txt`。
 
-**没有 requirements.txt，也没有安装脚本**——换机器要手工复现这套环境，见第九节 F 项。
+**换机器怎么装**：`requirements/` 里有完整清单与平台矩阵，`bootstrap_env.py` 负责探测、安装、打补丁、自检。三条命令：
 
-已知修补：`sox` 装了桩模块、`nagisa` 用假模块顶替、`regex` 需要重装。
+```bash
+python bootstrap_env.py                  # 只探测，不改任何东西
+python bootstrap_env.py --install --torch none   # 复用宿主 torch，装其余依赖
+python bootstrap_env.py --verify         # 起服务 + 合成一句 + ASR 回读
+```
+
+**注意 transformers 的真实版本是 4.57.3，不是 4.57.6**（本段原文写错了）。qwen-tts 要 4.57.3、qwen-asr 要 4.57.6，依赖图无解；现做法是装 4.57.3 的代码 + 一份 4.57.6 的占位元数据。`nagisa` 的假模块**在服务端代码里**（`tts_server.py` 导入 qwen_asr 前注入），不是环境补丁，跟着代码走。详见 `requirements/README.md`。
 
 ### 插件安装
 
@@ -258,7 +264,7 @@ node scripts/install.mjs --uninstall
 
 - 依赖 ComfyUI 便携包的 python + 手工 pip 到 `_tts_probe/pylibs`，**没有 requirements、没有安装脚本**。
 - 三个已知修补（sox 桩模块、nagisa 假模块、regex 重装）都靠手工，未写进任何脚本。
-- **建议**：固化 `requirements.txt` + `bootstrap_env.py`，把三个修补写进去。
+- **已解决（2026-11-17，v0.2.4）**：`requirements/` 固定了 38 个包的精确版本、平台矩阵和三条已知坑；`bootstrap_env.py` 做探测/安装/打桩/自检。顺带查清了三件事：nagisa 的假模块本来就在服务端代码里（不是环境补丁）；transformers 实际生效的是 4.57.3 而不是文档写的 4.57.6；`gradio/julius/ml_collections/beartype/diffq_fixed` 是上游声明了但代码路径用不到的，装了只会拖重依赖。
 
 ### G. 模型不自动下载
 
@@ -365,6 +371,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 句子级拼回 | `server/tts_server.py` + `lib/index.js` | `say` 现在额外写 `<stem>.bounds.json`（每句在成品里的**采样**起止点）；新增 `splice` 端点按样本区间替换某一句，电平对齐到被替换区间，字幕与边界按实际差值顺延。`voiceover_retakes` 传 `use=N`+`full=<整段>` 即调用。老音频没 bounds 会明确拒绝并说明原因 |
 | 错误码分级 | `server/tts_server.py` | 预期内的拒绝（缺文件 / 序号越界 / 采样率不符）返回 400 + 人话原因，不再和"服务真崩了"一起变成裸 500 |
 | 新增拼接回归 | `scripts/test_splice.py` | 自己拉起服务、用合成正弦波当素材，不需要 GPU、不需要模型；覆盖替换、时长、字幕顺延、以及三条拒绝路径 |
+| 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。
 

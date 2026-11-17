@@ -1,0 +1,6 @@
+# CPU —— 没有可用 GPU 时的兜底。能出声，但 0.6B 模型出 1 分钟音频要按分钟计。
+#
+#   pip install --extra-index-url https://download.pytorch.org/whl/cpu torch torchaudio torchvision
+torch>=2.4
+torchaudio>=2.4
+torchvision>=0.19
