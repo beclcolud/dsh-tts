@@ -1,0 +1,29 @@
+# dsh-tts 的 bundle 补丁层：只把 host 行插进来，不改 profile 的 package.json。
+# 可调项都在这里；升级插件不会覆盖这一层。
+- insert:
+    - id: dsh-tts
+      name: 'dsh-tts'
+      config:
+        port: 17321
+        # 本机跑在 ComfyUI 便携包的 Python 里（已装好 qwen-tts / qwen-asr / audio-separator）
+        pythonPath: 'E:\<工作区>\ComfyUI\ComfyUI_windows_portable\python_embeded\python.exe'
+        libs: 'E:\<工作区>\_tts_probe\pylibs'
+        models:
+          custom: 'E:\<工作区>\models\Qwen3-TTS-0.6B-CustomVoice'
+          design: 'E:\<工作区>\models\Qwen3-TTS-1.7B-VoiceDesign'
+          base: 'E:\<工作区>\models\Qwen3-TTS-0.6B-Base'
+          asr: 'E:\<工作区>\models\Qwen3-ASR-0.6B'
+        # 输出根目录；留空则落在当前会话工作区的 配音/ 下
+        workDir: 'E:\<工作区>\配音'
+        defaultVoice: '新闻联播音色'
+        idleShutdownMs: 300000
+        # —— 发音微调（都是实测调出来的，改动前先听）——
+        # 咬字清晰指令：解决字与字粘连，默认开
+        diction: true
+        # 易粘连词的断开方式：punct=插标点（默认，稳），split=拆字拼接（断点精确但对元音衔接不友好）
+        blur_mode: 'punct'
+        blur_sep: '、'
+        blur_words: ['答案', '牛奶']
+        # 拆字模式下的断点毫秒（blur_mode=split 时才用）
+        blur_gap_ms: 80
+        logFile: 'E:\<工作区>\配音\service.log'

@@ -1,0 +1,16 @@
+# 运行时产物
+node_modules/
+*.log
+.tmp/
+
+# profile 备份（由 install.mjs 生成，机器相关）
+scripts/profile.package.json.bak
+
+# 一次性调试脚本：按 HANDOVER §十一 判定为可丢弃，留在磁盘上但不进版本库。
+# 需要保留历史时用 git add -f scripts/one-off 单独纳入。
+scripts/one-off/
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store

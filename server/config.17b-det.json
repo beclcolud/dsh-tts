@@ -1,0 +1,16 @@
+{
+  "libs": "E:/<工作区>/_tts_probe/pylibs",
+  "work_dir": "E:/<工作区>/配音",
+  "models": {
+    "custom": "E:/<工作区>/models/Qwen3-TTS-1.7B-CustomVoice",
+    "design": "E:/<工作区>/models/Qwen3-TTS-1.7B-VoiceDesign",
+    "base": "E:/<工作区>/models/Qwen3-TTS-0.6B-Base",
+    "asr": "E:/<工作区>/models/Qwen3-ASR-0.6B"
+  },
+  "uvr_models": "E:/<工作区>/_tts_probe/uvr_models",
+  "uvr_model": "UVR-MDX-NET-Voc_FT.onnx",
+  "port": 17322,
+  "idle_shutdown_ms": 600000,
+  "sample": false,
+  "seed": 20261116
+}

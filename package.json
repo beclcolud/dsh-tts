@@ -1,0 +1,47 @@
+{
+  "name": "dsh-tts",
+  "version": "0.2.0",
+  "description": "文案配音：本地 Qwen3-TTS 出声，自动逐句字幕与成片；支持按 PR 时间轴分段配音、句子级重录克隆音色。",
+  "meta": {
+    "title": "配音 TTS",
+    "description": "文案一键转中文配音 + 逐句字幕 + 可选成片，纯本地不出网。"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json",
+    "./client": {
+      "default": "./lib/client.js"
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "lib",
+    "server",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "tts",
+    "qwen3-tts",
+    "voiceover"
+  ],
+  "license": "MIT"
+}

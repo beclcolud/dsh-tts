@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence>
+    <name>牛奶科普-成片</name>
+    <duration>1200</duration>
+    <timebase>25</timebase>
+    <marker>
+      <name>01</name>
+      <comment>开场</comment>
+      <in>50</in>
+      <out>200</out>
+    </marker>
+    <marker>
+      <name>02</name>
+      <in>250</in>
+      <out>500</out>
+    </marker>
+    <marker>
+      <name>03</name>
+      <in>520</in>
+      <out>700</out>
+    </marker>
+    <marker>
+      <name>04</name>
+      <in>750</in>
+      <out>-1</out>
+    </marker>
+  </sequence>
+</xmeml>
