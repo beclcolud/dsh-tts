@@ -501,6 +501,98 @@ def write_srt(path: Path, bounds, total: float):
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def splice_sentence(body: dict) -> dict:
+    """用重录的一版替换整段音频里的某一句，按采样点精确拼接。
+
+    边界来自合成时写下的 <stem>.bounds.json：那是拼音频时自己记录的采样位置，
+    不是从字幕反推的估值。字幕时间是给眼睛看的，含显示偏移且只有毫秒精度，
+    拿它当剪辑点会切掉半句——这个坑当初踩过。
+    老版本渲染的音频没有这份文件，只能整段重跑。
+    """
+    import numpy as np
+
+    full = Path(body["wav"]).expanduser()
+    if not full.exists():
+        raise ValueError("找不到整段音频：" + str(full))
+    bounds_file = Path(body.get("bounds") or str(full.with_suffix(".bounds.json")))
+    if not bounds_file.exists():
+        raise ValueError("缺少句子边界文件 %s（这份音频是旧版本渲染的，需要整段重跑一次）"
+                         % bounds_file.name)
+    meta = json.loads(bounds_file.read_text(encoding="utf-8"))
+    index = int(body.get("index") or 0)
+    sentences = meta.get("sentences", [])
+    span = next((s for s in sentences if int(s.get("i", -1)) == index), None)
+    if span is None:
+        raise ValueError("边界文件里没有第 %d 句（一共 %d 句）" % (index, len(sentences)))
+
+    audio, sr = load_wav(full)
+    take, take_sr = load_wav(Path(body["take"]).expanduser())
+    if int(take_sr) != int(sr):
+        raise ValueError("采样率不一致：整段 %d，重录 %d" % (sr, take_sr))
+
+    a = max(0, min(int(span["start"]), len(audio)))
+    b = max(a, min(int(span["end"]), len(audio)))
+    left, right = audio[:a], audio[b:]
+
+    # 电平对齐到被替换的那一段，否则接缝处会突然大一声或小一声。
+    seg = audio[a:b]
+    if len(seg) > 0 and len(take) > 0:
+        r_seg = float(np.sqrt(np.mean(seg ** 2)) + 1e-9)
+        r_take = float(np.sqrt(np.mean(take ** 2)) + 1e-9)
+        gain = min(max(r_seg / r_take, 10 ** (-6 / 20.0)), 10 ** (6 / 20.0))
+        take = take * gain
+
+    keep_ms = float(CONFIG.get("edge_keep_ms", 25))
+    fade_ms = float(CONFIG.get("fade_ms", 3))
+    take = apply_fade(trim_silence(take, sr, keep_ms / 1000.0, keep_ms / 1000.0), sr, fade_ms)
+
+    overlap_ms = float(CONFIG.get("overlap_ms", 10))
+    trigger_ms = float(CONFIG.get("overlap_trigger_ms", 120))
+    joined = take
+    if len(left) > 0:
+        joined, _s1, _g1, _o1 = join_with_overlap(left, joined, sr, overlap_ms, trigger_ms)
+    if len(right) > 0:
+        joined, _s2, _g2, _o2 = join_with_overlap(joined, right, sr, overlap_ms, trigger_ms)
+
+    target = Path(body["out_dir"]).expanduser() if body.get("out_dir") else out_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    stem = body.get("stem") or (full.stem + "-patched")
+    wav = target / (stem + ".wav")
+    save_wav(wav, joined, int(sr))
+
+    delta = (len(joined) - len(audio)) / float(sr)
+    new_bounds = []
+    for s in sentences:
+        st = s["start"] / float(sr)
+        en = s["end"] / float(sr)
+        k = int(s.get("i", 0))
+        if k == index:
+            en += delta
+        elif k > index:
+            st += delta
+            en += delta
+        new_bounds.append((st, en, s.get("text", "")))
+    srt = target / (stem + ".srt")
+    write_srt(srt, new_bounds, len(joined) / float(sr))
+
+    # 再写一份边界，接着替换第二句时可以直接用它
+    out_bounds = target / (stem + ".bounds.json")
+    out_bounds.write_text(json.dumps({
+        "sr": int(sr),
+        "total": int(len(joined)),
+        "source": full.name,
+        "replaced": [index],
+        "sentences": [
+            {"i": i + 1, "text": t, "start": int(round(st * sr)), "end": int(round(en * sr))}
+            for i, (st, en, t) in enumerate(new_bounds)
+        ],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"wav": str(wav), "srt": str(srt), "bounds": str(out_bounds),
+            "dur": round(len(joined) / float(sr), 2), "delta": round(delta, 3),
+            "index": index, "replaced_text": span.get("text", "")}
+
+
 def bank_dir() -> Path:
     p = Path(CONFIG["work_dir"]) / "voicebank"
     p.mkdir(parents=True, exist_ok=True)
@@ -634,9 +726,20 @@ def handle(req: str, body: dict) -> dict:
         wav = target / (stem + ".wav")
         save_wav(wav, audio, sr)
         srt = target / (stem + ".srt")
-        write_srt(srt, bounds, len(audio) / sr)
-        return {"wav": str(wav), "srt": str(srt), "dur": round(len(audio) / sr, 2),
-                "sr": sr, "sentences": len(bounds)}
+        total = len(audio)
+        write_srt(srt, bounds, total / sr)
+        # 精确到采样点的句子边界。SRT 是给眼睛看的（含 -60ms/+100ms 的显示偏移），
+        # 而且只有毫秒精度；重录后要按样本区间替换，只能靠这份自己记下的真值。
+        bounds_file = target / (stem + ".bounds.json")
+        bounds_file.write_text(json.dumps({
+            "sr": int(sr), "total": int(total),
+            "sentences": [
+                {"i": k + 1, "text": t, "start": int(round(st * sr)), "end": int(round(en * sr))}
+                for k, (st, en, t) in enumerate(bounds)
+            ],
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"wav": str(wav), "srt": str(srt), "bounds": str(bounds_file),
+                "dur": round(total / sr, 2), "sr": sr, "sentences": len(bounds)}
 
     if req == "preview":
         items = body["items"]
@@ -712,6 +815,9 @@ def handle(req: str, body: dict) -> dict:
         res = model.transcribe(audio=body["audio"], language=body.get("language") or "Chinese")
         return {"text": res[0].text, "language": str(res[0].language)}
 
+    if req == "splice":
+        return splice_sentence(body)
+
     if req == "bank_list":
         return {"entries": bank_load()}
 
@@ -749,6 +855,10 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 result = handle(req, body)
             self._send(200, {"ok": True, **result})
+        except ValueError as e:
+            # 预期内的拒绝（缺文件、句子越界、采样率不符）：400，别和"服务真的崩了"混在一起
+            log("WARN", str(e))
+            self._send(400, {"ok": False, "error": str(e)[:400]})
         except Exception as e:
             log("ERROR", repr(e))
             log(traceback.format_exc()[:1500])
@@ -771,7 +881,9 @@ def watchdog():
 
 def main():
     CONFIG.update(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
-    sys.path.insert(0, CONFIG["libs"])
+    libs = CONFIG.get("libs")
+    if libs:  # 允许不配额外库目录（只跑 bank/splice 这类纯音频操作时用不着）
+        sys.path.insert(0, libs)
     port = int(CONFIG.get("port", 17321))
     log("dsh-tts service on", port, "work_dir=", CONFIG["work_dir"])
     threading.Thread(target=watchdog, daemon=True).start()
