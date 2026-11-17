@@ -159,8 +159,9 @@ def run(work: Path):
     probe_a, probe_b = n1 + int(0.10 * SR), n1 + int(0.30 * SR)
     f_new = zcr(out[probe_a:probe_b]) * SR / 2
     ok(abs(f_new - 660) < 40, "替换区中间是新录的 660Hz", round(f_new))
-    seam_left = zcr(out[n1 - int(0.06 * SR): n1 - int(0.01 * SR)]) * SR / 2
-    ok(abs(seam_left - 440) < 60, "接缝之前仍是原来的 440Hz", round(seam_left))
+    # 接缝前那一小段本来就是 120ms 静音（fixture 如此），要去素材本体上验
+    f_head = zcr(out[int(0.20 * SR):int(0.40 * SR)]) * SR / 2
+    ok(abs(f_head - 440) < 40, "第一句素材未被改动（仍是 440Hz）", round(f_head))
     f_tail = zcr(out[-int(0.4 * SR):]) * SR / 2
     ok(abs(f_tail - 1320) < 80, "第三句还在原位", round(f_tail))
 
