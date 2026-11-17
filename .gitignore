@@ -10,6 +10,11 @@ scripts/profile.package.json.bak
 # 需要保留历史时用 git add -f scripts/one-off 单独纳入。
 scripts/one-off/
 
+# 交接文档的生成物：源文件是 HANDOVER.md，改了 .md 就要重跑 scripts/md_to_docx.py，
+# 否则仓库里的 Word/PDF 会悄悄过期（曾发生过一次）。
+HANDOVER.docx
+HANDOVER.pdf
+
 # 系统
 Thumbs.db
 desktop.ini
