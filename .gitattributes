@@ -1,0 +1,10 @@
+# 统一行尾：文本文件按 LF 存储，Windows 批处理/脚本按 CRLF 检出。
+# 之前 index.js 是 CRLF、新模块是 LF，跨编辑器改动会产生整文件 diff。
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.docx binary
+*.pdf binary
+*.wav binary
+*.mp3 binary
