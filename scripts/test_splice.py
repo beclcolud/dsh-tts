@@ -154,8 +154,13 @@ def run(work: Path):
             return 0.0
         return sum(1 for i in range(1, len(x)) if (x[i - 1] < 0) != (x[i] < 0)) / (len(x) - 1)
 
-    f_new = zcr(out[n1 - int(0.05 * SR): n1 + int(0.35 * SR)]) * SR / 2
-    ok(abs(f_new - 660) < 60, "替换处是新录的 660Hz", round(f_new))
+    # 探测窗要放在替换区**中间**：贴着接缝测会把前一句的 440Hz 混进来，
+    # 得到的是加权平均而不是新素材本身的频率。
+    probe_a, probe_b = n1 + int(0.10 * SR), n1 + int(0.30 * SR)
+    f_new = zcr(out[probe_a:probe_b]) * SR / 2
+    ok(abs(f_new - 660) < 40, "替换区中间是新录的 660Hz", round(f_new))
+    seam_left = zcr(out[n1 - int(0.06 * SR): n1 - int(0.01 * SR)]) * SR / 2
+    ok(abs(seam_left - 440) < 60, "接缝之前仍是原来的 440Hz", round(seam_left))
     f_tail = zcr(out[-int(0.4 * SR):]) * SR / 2
     ok(abs(f_tail - 1320) < 80, "第三句还在原位", round(f_tail))
 
