@@ -123,8 +123,8 @@ def main() -> int:
     ap.add_argument("--libs", default=str(ROOT.parent / "_tts_probe" / "pylibs"))
     ap.add_argument("--voice", default="新闻联播音色", help="音色库名或预设名；不同音色的接缝表现差别很大")
     ap.add_argument("--bank-dir", default=str(ROOT.parent / "配音" / "voicebank"))
-    ap.add_argument("--no-noise", action="store_true",
-                    help="补静音时用纯 0（旧行为），用来对比数字静音和底噪填充")
+    ap.add_argument("--fill", default="donor", choices=["donor", "noise", "zero"],
+                    help="补停顿时用什么：donor=素材自己的静音（默认）/ noise=合成噪声 / zero=纯 0")
     ap.add_argument("--pauses", default=None,
                     help="覆盖停顿时长（JSON，键是句末标点），例如 {\"。\": 260}")
     args = ap.parse_args()
@@ -180,9 +180,7 @@ def main() -> int:
             kind, voice = "custom", {"speaker": args.voice}
             print("音色：%s（预设）" % args.voice)
 
-        extra = {}
-        if args.no_noise:
-            extra["seam_noise"] = False
+        extra = {"seam_fill": args.fill}
         if args.pauses:
             extra["seam_target_ms"] = json.loads(args.pauses)
             print("停顿覆盖：%s" % extra["seam_target_ms"])
@@ -198,8 +196,8 @@ def main() -> int:
             tag = "A-现状" if label == "A" else "B-按标点"
             if label == "B" and args.pauses:
                 tag += "-自定义"
-            if label == "B" and args.no_noise:
-                tag += "-纯零"
+            if label == "B" and args.fill != "donor":
+                tag += "-" + {"noise": "合成噪声", "zero": "纯零"}[args.fill]
             mp3 = out / ("接缝%s-%s.mp3" % (tag, args.voice))
             try:
                 subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav), "-c:a", "libmp3lame",

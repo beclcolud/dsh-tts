@@ -457,7 +457,82 @@ def _comfort_noise(n: int, sr: int, rms: float):
     return w
 
 
-def join_with_target(left, right, sr, target_ms: float, pad_noise: bool = True):
+def _quietest_run(a, sr):
+    """找 a 里最长的一段「被判为静音」的连续区间，返回 (长度采样, 起点采样)。
+
+    用来给补停顿找"供体"：素材自己的静音里既有它的电平，也有它的频谱。
+    """
+    import numpy as np
+    env, win, hop = _frame_env(a, sr)
+    if len(env) == 0:
+        return None
+    thr = _silence_thr(env)
+    best, start = None, None
+    for i, v in enumerate(env):
+        if v <= thr:
+            if start is None:
+                start = i
+            continue
+        if start is not None:
+            length = (i - 1 - start) * hop + win
+            if best is None or length > best[0]:
+                best = (length, start * hop)
+            start = None
+    if start is not None:
+        length = (len(env) - 1 - start) * hop + win
+        if best is None or length > best[0]:
+            best = (length, start * hop)
+    return best
+
+
+def _tile_with_crossfade(seg, n: int, sr: int):
+    """把一段短素材铺到 n 个采样，接缝处 10ms 交叉淡化，避免周期性咔哒。"""
+    import numpy as np
+    if len(seg) == 0:
+        return np.zeros(n, dtype=np.float32)
+    seg = np.asarray(seg, dtype=np.float32)
+    if len(seg) >= n:
+        return seg[:n].copy()
+    out = seg.copy()
+    fade = min(int(0.010 * sr), max(1, len(seg) // 4))
+    while len(out) < n:
+        need = min(len(seg), n - len(out))
+        chunk = seg[:need].copy()
+        if fade > 0 and need > fade and len(out) > fade:
+            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+            out[-fade:] *= ramp[::-1]
+            chunk[:fade] *= ramp
+        out = np.concatenate([out, chunk])
+    return out[:n]
+
+
+def _donor_pad(left, right, sr, n: int):
+    """用这段录音**自己**最安静的一段来补停顿。
+
+    比合成噪声好在两点：电平和频谱都对，而且如果素材本身句间就是数字静音，
+    补出来也是数字静音——和它旁边的间隙完全一致，听不出"换了个质地"。
+    """
+    import numpy as np
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    cands = []
+    for c in (left, right):
+        run = _quietest_run(c, sr)
+        if run:
+            cands.append((run[0], run[1], c))
+    if not cands:
+        return None
+    cands.sort(key=lambda t: -t[0])
+    length, start, src = cands[0]
+    if length < int(0.030 * sr):
+        return None
+    take = min(length, n)
+    mid = start + max(0, (length - take) // 2)
+    donor = src[mid:mid + take]
+    return _tile_with_crossfade(donor, n, sr)
+
+
+def join_with_target(left, right, sr, target_ms: float, pad_fill: str = "donor"):
     """把接缝的停顿规整到一个目标长度，而不是"模型给多少算多少"。
 
     做法：量出左边尾部、右边头部的真实静音，和目标的差值直接补零或裁掉。
@@ -472,8 +547,15 @@ def join_with_target(left, right, sr, target_ms: float, pad_noise: bool = True):
         joined = np.concatenate([left, right])
     elif cur < want:
         pad = int(round((want - cur) * sr))
-        floor = _noise_rms(left, right, sr) if pad_noise else 0.0
-        joined = np.concatenate([left, _comfort_noise(pad, sr, floor), right])
+        if pad_fill == "zero":
+            fill = np.zeros(pad, dtype=np.float32)
+        elif pad_fill == "noise":
+            fill = _comfort_noise(pad, sr, _noise_rms(left, right, sr))
+        else:  # donor：优先用素材自己的静音
+            fill = _donor_pad(left, right, sr, pad)
+            if fill is None:
+                fill = _comfort_noise(pad, sr, _noise_rms(left, right, sr))
+        joined = np.concatenate([left, fill, right])
     else:
         cut = int(round((cur - want) / 2.0 * sr))
         joined = np.concatenate([left[: max(1, len(left) - cut)], right[min(len(right) - 1, cut):]])
@@ -556,7 +638,7 @@ SEAM_TARGET_FALLBACK = 160
 
 def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1,
                     do_trim: bool = True, seam: str | None = None, report: dict | None = None,
-                    seam_targets: dict | None = None, pad_noise: bool = True):
+                    seam_targets: dict | None = None, pad_fill: str = "donor"):
     """Synthesize sentence by sentence so the subtitle timeline is exact.
 
     seam="current"：原策略，保留 25ms 边距，只有空隙 >120ms 才做 10ms 交叉淡化。
@@ -569,13 +651,22 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     cursor = 0.0
     sr = 24000
     gap_ms = float(CONFIG.get("blur_gap_ms", 80))
+    policy = seam or CONFIG.get("seam_policy") or "target"
+    # 三层覆盖：请求参数 > 配置文件 > 内置默认
+    targets = dict(SEAM_TARGET_MS)
+    if isinstance(CONFIG.get("seam_target_ms"), dict):
+        targets.update({str(k): float(v) for k, v in CONFIG["seam_target_ms"].items()})
+    if isinstance(seam_targets, dict):
+        targets.update({str(k): float(v) for k, v in seam_targets.items()})
     for sentence in split_sentences(text):
         parts = []
         pieces_of_sentence = split_for_blur(sentence) if CONFIG.get("blur_mode") == "split" else [sentence]
         for piece in pieces_of_sentence:
             best_a, best_score = None, 1e9
             for _take in range(1 if CONFIG.get('sample', True) is False else max(1, takes)):
-                a_try, sr_try = _render_once(model, kind, piece, voice, do_trim)
+                # 这里不裁：内层用默认 25ms 裁过之后，外层就没法再保留尾音了。
+                # 统一在外面按目标停顿算好边距再裁一次。
+                a_try, sr_try = _render_once(model, kind, piece, voice, False)
                 score = nasality(a_try, sr_try)
                 if score < best_score:
                     best_a, best_score, sr = a_try, score, sr_try
@@ -596,17 +687,21 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     overlap_ms = float(CONFIG.get("overlap_ms", 10))
     trigger_ms = float(CONFIG.get("overlap_trigger_ms", 120))
     fade_ms = float(CONFIG.get("fade_ms", 3))
-    pieces = [apply_fade(trim_silence(p, sr, keep_ms / 1000.0, keep_ms / 1000.0), sr, fade_ms) for p in pieces]
+    # 关键：尾部不要一刀切到 25ms。
+    # 模型自己的尾音里就带着这段音频的底噪/房间感，先切掉再想办法补回来是本末倒置——
+    # 补什么都会"换质地"（纯零像断了、合成噪声像雪花屏）。留足它能提供的最大停顿，
+    # 后面 join_with_target 只裁不需要补，绝大多数接缝就完全不需要人工填充了。
+    keep_head_s = keep_ms / 1000.0
+    keep_tail_s = keep_head_s
+    if policy == "target" and targets:
+        keep_tail_s = max(keep_head_s, max(float(v) for v in targets.values()) / 1000.0 + 0.05)
+    if do_trim:
+        pieces = [apply_fade(trim_silence(p, sr, keep_head_s, keep_tail_s), sr, fade_ms) for p in pieces]
+    else:
+        pieces = [apply_fade(p, sr, fade_ms) for p in pieces]
     pieces = match_loudness(pieces)
     if not pieces:
         return np.zeros(0, dtype=np.float32), int(sr), bounds
-    policy = seam or CONFIG.get("seam_policy") or "target"
-    # 三层覆盖：请求参数 > 配置文件 > 内置默认
-    targets = dict(SEAM_TARGET_MS)
-    if isinstance(CONFIG.get("seam_target_ms"), dict):
-        targets.update({str(k): float(v) for k, v in CONFIG["seam_target_ms"].items()})
-    if isinstance(seam_targets, dict):
-        targets.update({str(k): float(v) for k, v in seam_targets.items()})
     seams = []
     audio = pieces[0]
     starts = [0.0]
@@ -615,7 +710,7 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         mark = next((c for c in reversed(prev_text.strip()) if c in targets), "")
         if policy == "target":
             want = float(targets.get(mark, SEAM_TARGET_FALLBACK))
-            audio, before_s, _ = join_with_target(audio, nxt, sr, want, pad_noise=pad_noise)
+            audio, before_s, _ = join_with_target(audio, nxt, sr, want, pad_fill=pad_fill)
             # join_with_target 里 cur 是秒；达成值就是目标值（补零/裁剪后按构造精确）
             seams.append({"i": i, "after": prev_text[-8:], "mark": mark,
                           "before_ms": round(before_s * 1000, 1), "after_ms": round(want, 1),
@@ -869,7 +964,8 @@ def handle(req: str, body: dict) -> dict:
                                            do_trim=bool(body.get("trim", True)),
                                            seam=body.get("seam"), report=seam_report,
                                            seam_targets=body.get("seam_target_ms"),
-                                           pad_noise=bool(body.get("seam_noise", True)))
+                                           pad_fill=body.get("seam_fill")
+                                           or ("zero" if body.get("seam_noise") is False else "donor"))
         stem = body.get("stem") or ("tts-%d" % int(time.time()))
         target = Path(body["out_dir"]).expanduser() if body.get("out_dir") else out_dir()
         target.mkdir(parents=True, exist_ok=True)
