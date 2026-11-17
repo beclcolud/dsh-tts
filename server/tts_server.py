@@ -522,8 +522,25 @@ def bank_save(data: dict):
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _voice_fingerprint(entry: dict) -> str:
+    """同一个音色不该因为叫法不同就重复入库。"""
+    return json.dumps(entry.get("voice") or {}, sort_keys=True, ensure_ascii=False)
+
+
 def bank_add(entry: dict) -> dict:
     data = bank_load()
+    # dedupe 只用于"保存这个音色"的场景（全长渲染）。
+    # 出候选时相反：同一段描述要出 N 个不同的音，全部保留才能挑，所以不能去重。
+    if entry.pop("dedupe", False):
+        key = _voice_fingerprint(entry)
+        for existing in data.values():
+            if existing.get("kind") == entry.get("kind") and _voice_fingerprint(existing) == key:
+                for field in ("sample_mp3", "note"):
+                    if entry.get(field):
+                        existing[field] = entry[field]
+                existing["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                bank_save(data)
+                return existing
     name = entry["name"]
     base = name
     i = 2
