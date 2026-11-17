@@ -375,6 +375,28 @@ def _edge_silence(a, sr, level: float = 0.01):
     return idx[0] / sr, (len(a) - 1 - idx[-1]) / sr
 
 
+def join_with_target(left, right, sr, target_ms: float):
+    """把接缝的停顿规整到一个目标长度，而不是"模型给多少算多少"。
+
+    做法：量出左边尾部、右边头部的真实静音，和目标的差值直接补零或裁掉。
+    不留硬接：补零本身就是完全静音，不存在相位跳变，也就没有咔哒声。
+    """
+    import numpy as np
+    head, _ = _edge_silence(right, sr)
+    _, tail = _edge_silence(left, sr)
+    cur = float(tail + head)
+    want = max(0.0, target_ms / 1000.0)
+    if abs(cur - want) < 0.005:
+        joined = np.concatenate([left, right])
+    elif cur < want:
+        pad = int(round((want - cur) * sr))
+        joined = np.concatenate([left, np.zeros(pad, dtype=np.float32), right])
+    else:
+        cut = int(round((cur - want) / 2.0 * sr))
+        joined = np.concatenate([left[: max(1, len(left) - cut)], right[min(len(right) - 1, cut):]])
+    return joined, cur, want
+
+
 def join_with_overlap(left, right, sr, overlap_ms: float, trigger_ms: float):
     """Butt-join, unless the seam holds a real gap - then crossfade briefly.
 
@@ -442,8 +464,17 @@ def match_loudness(chunks, max_gain_db: float = 6.0):
     return out
 
 
-def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1, do_trim: bool = True):
-    """Synthesize sentence by sentence so the subtitle timeline is exact."""
+SEAM_TARGET_MS = {"。": 180, "！": 180, "？": 180, "；": 140, "：": 140, "，": 90, "、": 70}
+
+
+def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1,
+                    do_trim: bool = True, seam: str | None = None, report: dict | None = None):
+    """Synthesize sentence by sentence so the subtitle timeline is exact.
+
+    seam="current"：原策略，保留 25ms 边距，只有空隙 >120ms 才做 10ms 交叉淡化。
+    seam="target" ：按句末标点把停顿规整到 SEAM_TARGET_MS（。/180ms、，/90ms…）。
+    默认取 CONFIG["seam_policy"]，没配就是 current —— 实验期间两个都能跑，默认行为不变。
+    """
     import numpy as np
     model = MODELS.get(kind)
     pieces, bounds = [], []
@@ -481,11 +512,32 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     pieces = match_loudness(pieces)
     if not pieces:
         return np.zeros(0, dtype=np.float32), int(sr), bounds
+    policy = seam or CONFIG.get("seam_policy") or "current"
+    targets = CONFIG.get("seam_target_ms") or SEAM_TARGET_MS
+    seams = []
     audio = pieces[0]
     starts = [0.0]
-    for nxt in pieces[1:]:
-        audio, start, _gap, _ov = join_with_overlap(audio, nxt, sr, overlap_ms, trigger_ms)
-        starts.append(start)
+    for i, nxt in enumerate(pieces[1:], 1):
+        prev_text = str(bounds[i - 1][2]) if i - 1 < len(bounds) else ""
+        mark = next((c for c in reversed(prev_text.strip()) if c in targets), "")
+        if policy == "target":
+            want = float(targets.get(mark, 120))
+            audio, before_s, _ = join_with_target(audio, nxt, sr, want)
+            # join_with_target 里 cur 是秒；达成值就是目标值（补零/裁剪后按构造精确）
+            seams.append({"i": i, "after": prev_text[-8:], "mark": mark,
+                          "before_ms": round(before_s * 1000, 1), "after_ms": round(want, 1),
+                          "target_ms": want, "overlap_ms": 0.0})
+        else:
+            audio, start, gap_ms, ov = join_with_overlap(audio, nxt, sr, overlap_ms, trigger_ms)
+            # join_with_overlap 返回的 gap_ms 已经是毫秒
+            seams.append({"i": i, "after": prev_text[-8:], "mark": mark,
+                          "before_ms": round(gap_ms, 1),
+                          "after_ms": round(max(0.0, gap_ms - ov * 1000.0 / sr), 1),
+                          "target_ms": None, "overlap_ms": round(ov * 1000.0 / sr, 1)})
+        starts.append(start if policy != "target" else len(audio) / sr - len(nxt) / sr)
+    if report is not None:
+        report["policy"] = policy
+        report["seams"] = seams
     audio = normalize_output(audio, sr)
     total = len(audio) / sr
     bounds = [(starts[i], starts[i + 1] if i + 1 < len(starts) else total, t) for i, (_a, _b, t) in enumerate(bounds)]
@@ -719,7 +771,10 @@ def handle(req: str, body: dict) -> dict:
     if req == "say":
         voice = body["voice"]
         kind = body.get("kind") or voice.get("kind") or "custom"
-        audio, sr, bounds = synth_sentences(kind, body["text"], voice, takes=int(body.get("takes", 1)), do_trim=bool(body.get("trim", True)))
+        seam_report = {}
+        audio, sr, bounds = synth_sentences(kind, body["text"], voice, takes=int(body.get("takes", 1)),
+                                           do_trim=bool(body.get("trim", True)),
+                                           seam=body.get("seam"), report=seam_report)
         stem = body.get("stem") or ("tts-%d" % int(time.time()))
         target = Path(body["out_dir"]).expanduser() if body.get("out_dir") else out_dir()
         target.mkdir(parents=True, exist_ok=True)
@@ -738,8 +793,11 @@ def handle(req: str, body: dict) -> dict:
                 for k, (st, en, t) in enumerate(bounds)
             ],
         }, ensure_ascii=False, indent=2), encoding="utf-8")
+        seams_file = target / (stem + ".seams.json")
+        seams_file.write_text(json.dumps(seam_report, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"wav": str(wav), "srt": str(srt), "bounds": str(bounds_file),
-                "dur": round(total / sr, 2), "sr": sr, "sentences": len(bounds)}
+                "seams": str(seams_file), "dur": round(total / sr, 2), "sr": sr,
+                "sentences": len(bounds)}
 
     if req == "preview":
         items = body["items"]
@@ -884,6 +942,8 @@ def main():
     libs = CONFIG.get("libs")
     if libs:  # 允许不配额外库目录（只跑 bank/splice 这类纯音频操作时用不着）
         sys.path.insert(0, libs)
+    else:
+        log("WARN 配置里没有 libs：只跑 bank/splice 没问题，一旦要加载模型就会报 No module named 'qwen_tts'")
     port = int(CONFIG.get("port", 17321))
     log("dsh-tts service on", port, "work_dir=", CONFIG["work_dir"])
     threading.Thread(target=watchdog, daemon=True).start()

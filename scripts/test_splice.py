@@ -75,8 +75,25 @@ def call(req, **body):
             return {"ok": False, "error": "HTTP %d" % e.code}
 
 
+def make_workdir(prefix: str) -> Path:
+    """把临时目录建在系统 temp 里。
+
+    注意：TEMP/TMP 没配置时，Python 的 tempfile 会退到**当前目录**——
+    test 脚本又常从仓库根跑，于是临时目录就落进版本库了（已经发生过一次）。
+    这里显式检查，一旦发现指向仓库内部就改用仓库外的 _tmp。
+    """
+    base = Path(tempfile.gettempdir())
+    try:
+        base.resolve().relative_to(Path.cwd().resolve())
+        base = Path.cwd().parent / "_tmp"
+        base.mkdir(parents=True, exist_ok=True)
+    except ValueError:
+        pass
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
+
+
 def main():
-    work = Path(tempfile.mkdtemp(prefix="dsh-tts-splice-"))
+    work = make_workdir("dsh-tts-splice-")
     cfg = work / "cfg.json"
     cfg.write_text(json.dumps({"work_dir": str(work), "models": {}, "port": PORT,
                                "idle_shutdown_ms": 600000}), encoding="utf-8")

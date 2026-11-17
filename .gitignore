@@ -15,6 +15,9 @@ scripts/one-off/
 HANDOVER.docx
 HANDOVER.pdf
 
+# 测试脚本的临时目录（TEMP 没配时会退到当前目录，落进仓库——已发生过一次）
+dsh-tts-*/
+
 # 系统
 Thumbs.db
 desktop.ini
