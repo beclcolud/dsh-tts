@@ -360,8 +360,9 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 拼接不再依赖 ffmpeg | `lib/synth.js` | 服务端固定输出 16-bit 单声道 PCM，分片改为字节级直拼（无损，且绕开 Windows 路径在 concat 列表里的转义问题）；格式不一致时自动回退 ffmpeg |
 | 重录工具描述纠正 | `lib/index.js` | 删掉"按需重拼整段"——它从来只写 `chosen-N.wav` + `picks.json`，照原描述汇报会向用户谎报"已拼回" |
 | 新增回归测试 | `scripts/test_chunking.mjs` | 不依赖 GPU、不发 HTTP、不需要 ffmpeg，秒级跑完：切分 / 续跑 / 字幕偏移 / 格式回退全覆盖 |
+| 音色库去噪 | `server/tts_server.py` + `lib/index.js` | 全长渲染默认**不再自动入库**（要存传 `bank=true`）；入库时按音色指纹去重，同一音色不再堆出 `-2/-3/-4`。出候选时仍然各自保留——那里本该是 N 个不同的音，去重会把挑音色的流程合并掉 |
 
-仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）、音色库自动入库去噪。
+仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。
 
 **已知副作用**
 - 长文案会在产物目录留下 `<stem>-pN.wav/.srt/.json`，这是续跑用的缓存，删掉不影响成品。
