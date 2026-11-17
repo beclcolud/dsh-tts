@@ -50,8 +50,12 @@ def make_workdir(prefix: str) -> Path:
 def call(req, **body):
     data = json.dumps({"req": req, **body}).encode()
     r = urllib.request.Request(URL, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(r, timeout=300) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(r, timeout=300) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        raise SystemExit("服务返回 %d：%s" % (exc.code, body[:400]))
 
 
 def silence_runs(wav: Path, min_ms=50.0, thr_ratio=0.03, boundaries=None):
@@ -108,6 +112,8 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--models-dir", default=str(ROOT.parent / "models"))
     ap.add_argument("--libs", default=str(ROOT.parent / "_tts_probe" / "pylibs"))
+    ap.add_argument("--voice", default="新闻联播音色", help="音色库名或预设名；不同音色的接缝表现差别很大")
+    ap.add_argument("--bank-dir", default=str(ROOT.parent / "配音" / "voicebank"))
     args = ap.parse_args()
 
     work = make_workdir("dsh-tts-seam-")
@@ -128,6 +134,15 @@ def main() -> int:
     }
     cfg_path = work / "cfg.json"
     cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # 实验用临时 work_dir，音色库是空的；把真实库拷进去才能按名字选音色。
+    # 条目里的 ref_audio 是绝对路径，拷过来仍然有效。
+    src_bank = Path(args.bank_dir) / "index.json"
+    if src_bank.exists():
+        (work / "voicebank").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src_bank, work / "voicebank" / "index.json")
+    else:
+        print("提醒：找不到音色库 %s，只能按预设名选音色" % src_bank)
+
     log = open(work / "server.log", "w", encoding="utf-8")
     proc = subprocess.Popen([sys.executable, str(ROOT / "server" / "tts_server.py"), str(cfg_path)],
                             stdout=log, stderr=log)
@@ -144,15 +159,23 @@ def main() -> int:
             print("服务没起来，日志：" + (work / "server.log").read_text(encoding="utf-8", errors="replace")[-800:])
             return 1
 
+        bank = call("bank_list").get("entries", {})
+        if args.voice in bank:
+            kind, voice = bank[args.voice]["kind"], bank[args.voice]["voice"]
+            print("音色：%s（音色库，kind=%s）" % (args.voice, kind))
+        else:
+            kind, voice = "custom", {"speaker": args.voice}
+            print("音色：%s（预设）" % args.voice)
+
         for label, seam in (("A", "current"), ("B", "target")):
             print("渲染 %s（seam=%s）..." % (label, seam), flush=True)
-            r = call("say", text=TEXT, kind="custom", voice={"speaker": "Serena"},
+            r = call("say", text=TEXT, kind=kind, voice=voice,
                      stem="seam" + label, out_dir=str(work), seam=seam)
             wav = Path(r["wav"])
             bounds = json.loads(Path(r["bounds"]).read_text(encoding="utf-8"))
             starts = [s["start"] / bounds["sr"] for s in bounds["sentences"][1:]]
             runs, sr, at_b = silence_runs(wav, boundaries=starts)
-            mp3 = out / ("接缝%s.mp3" % ("A-现状" if label == "A" else "B-按标点"))
+            mp3 = out / ("接缝%s-%s.mp3" % ("A-现状" if label == "A" else "B-按标点", args.voice))
             try:
                 subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav), "-c:a", "libmp3lame",
                                 "-b:a", "192k", str(mp3)], check=True)
