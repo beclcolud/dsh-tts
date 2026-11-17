@@ -223,21 +223,47 @@ def _render_once(model, kind: str, text: str, voice: dict, do_trim: bool = True)
     return (trim_silence(audio, sr) if do_trim else audio), int(sr)
 
 
-def trim_silence(a, sr, keep_head: float = 0.025, keep_tail: float = 0.025, head_ratio: float = 0.005):
+SILENCE_RATIO = 0.03      # 帧能量低于本段峰值的 3% 就算静音
+SILENCE_FLOOR = 1e-4      # 绝对下限，防止极安静的片段把门限压到噪声里
+
+
+def _frame_env(a, sr):
+    """10ms 窗 / 5ms 步长的 RMS 包络。返回 (env, win, hop)，单位都是采样。"""
+    import numpy as np
+    win = max(2, int(0.010 * sr))
+    hop = max(1, int(0.005 * sr))
+    if len(a) == 0:
+        return np.zeros(0, dtype=np.float32), win, hop
+    if len(a) <= win:
+        return np.array([float(np.sqrt(np.mean(a ** 2)))], dtype=np.float32), win, hop
+    n = 1 + (len(a) - win) // hop
+    env = np.array([float(np.sqrt(np.mean(a[i * hop:i * hop + win] ** 2))) for i in range(n)],
+                   dtype=np.float32)
+    return env, win, hop
+
+
+def _silence_thr(env) -> float:
+    return max(float(env.max()) * SILENCE_RATIO, SILENCE_FLOOR) if len(env) else SILENCE_FLOOR
+
+
+def trim_silence(a, sr, keep_head: float = 0.025, keep_tail: float = 0.025, head_ratio=None):
     """Cut near-silence at both ends.
 
-    Each per-sentence render comes with its own leading/trailing silence; keeping
-    it while concatenating makes sentence boundaries sound like long, odd pauses.
+    判据是**帧能量**，不是逐采样幅度。原来这里用「峰值 × 0.5%」的逐采样门限，
+    而 _edge_silence 用「绝对值 0.01」，两把尺子；当底噪正好落在两者之间
+    （克隆音色就是这样），裁切看不见它、量接缝却看得见，结果半秒多的静音被
+    原样留在成品里。现在两边共用 _frame_env + _silence_thr，结论必然一致。
     """
     import numpy as np
-    # A softer threshold on the way in: an attack that ramps up over 30-40 ms gets
-    # clipped by a 2% gate, and the first syllable then sounds cut in half.
-    thr = max(1e-4, float(np.max(np.abs(a))) * head_ratio)
-    idx = np.where(np.abs(a) > thr)[0]
+    if len(a) == 0:
+        return a
+    env, win, hop = _frame_env(a, sr)
+    thr = _silence_thr(env)
+    idx = np.where(env > thr)[0]
     if len(idx) == 0:
         return a
-    start = max(0, idx[0] - int(keep_head * sr))
-    end = min(len(a), idx[-1] + int(keep_tail * sr))
+    start = max(0, int(idx[0]) * hop - int(keep_head * sr))
+    end = min(len(a), int(idx[-1]) * hop + win + int(keep_tail * sr))
     return a[start:end]
 
 
@@ -366,13 +392,17 @@ def apply_fade(a, sr, ms: float = 3.0):
     return b
 
 
-def _edge_silence(a, sr, level: float = 0.01):
-    """(leading, trailing) silence in seconds at a fixed audibility level."""
+def _edge_silence(a, sr, level: float | None = None):
+    """(leading, trailing) silence in seconds，判据与 trim_silence 同一套。"""
     import numpy as np
-    idx = np.where(np.abs(a) > level)[0]
-    if len(idx) == 0:
+    if len(a) == 0:
         return 0.0, 0.0
-    return idx[0] / sr, (len(a) - 1 - idx[-1]) / sr
+    env, win, hop = _frame_env(a, sr)
+    thr = _silence_thr(env) if level is None else level
+    idx = np.where(env > thr)[0]
+    if len(idx) == 0:
+        return len(a) / sr, len(a) / sr
+    return (int(idx[0]) * hop) / sr, (len(a) - (int(idx[-1]) * hop + win)) / sr
 
 
 def join_with_target(left, right, sr, target_ms: float):
