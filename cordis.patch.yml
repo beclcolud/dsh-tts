@@ -26,4 +26,14 @@
         blur_words: ['答案', '牛奶']
         # 拆字模式下的断点毫秒（blur_mode=split 时才用）
         blur_gap_ms: 80
+        # —— 句间停顿（接缝）——
+        # target = 按句末标点把停顿规整到下面这些毫秒值；current = 只保留 25ms 边距，看模型给多少。
+        # 只有句末标点会成为接缝（split_sentences 只按 。！？； 和换行切句）。
+        # 注意：改这里要重启配音服务才生效（服务启动时读一次）。只调一次的话用工具参数 seamPauses。
+        seamPolicy: 'target'
+        seamPauses:
+          '。': 180      # 新闻播报 220~260；解说 180；口语化 140~160
+          '！': 200
+          '？': 200
+          '；': 140
         logFile: 'E:\<工作区>\配音\service.log'

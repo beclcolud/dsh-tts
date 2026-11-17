@@ -494,11 +494,16 @@ def match_loudness(chunks, max_gain_db: float = 6.0):
     return out
 
 
-SEAM_TARGET_MS = {"。": 180, "！": 180, "？": 180, "；": 140, "：": 140, "，": 90, "、": 70}
+# 句间停顿默认值（毫秒），键是**句末标点**。
+# 只有 split_sentences 会切开的那几个标点才可能成为接缝，即 。！？； 和换行；
+# ，、： 不会切断句子，写在这里也无害，但不会生效。
+SEAM_TARGET_MS = {"。": 180, "！": 200, "？": 200, "；": 140, "\n": 180}
+SEAM_TARGET_FALLBACK = 160
 
 
 def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1,
-                    do_trim: bool = True, seam: str | None = None, report: dict | None = None):
+                    do_trim: bool = True, seam: str | None = None, report: dict | None = None,
+                    seam_targets: dict | None = None):
     """Synthesize sentence by sentence so the subtitle timeline is exact.
 
     seam="current"：原策略，保留 25ms 边距，只有空隙 >120ms 才做 10ms 交叉淡化。
@@ -542,8 +547,13 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     pieces = match_loudness(pieces)
     if not pieces:
         return np.zeros(0, dtype=np.float32), int(sr), bounds
-    policy = seam or CONFIG.get("seam_policy") or "current"
-    targets = CONFIG.get("seam_target_ms") or SEAM_TARGET_MS
+    policy = seam or CONFIG.get("seam_policy") or "target"
+    # 三层覆盖：请求参数 > 配置文件 > 内置默认
+    targets = dict(SEAM_TARGET_MS)
+    if isinstance(CONFIG.get("seam_target_ms"), dict):
+        targets.update({str(k): float(v) for k, v in CONFIG["seam_target_ms"].items()})
+    if isinstance(seam_targets, dict):
+        targets.update({str(k): float(v) for k, v in seam_targets.items()})
     seams = []
     audio = pieces[0]
     starts = [0.0]
@@ -551,7 +561,7 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         prev_text = str(bounds[i - 1][2]) if i - 1 < len(bounds) else ""
         mark = next((c for c in reversed(prev_text.strip()) if c in targets), "")
         if policy == "target":
-            want = float(targets.get(mark, 120))
+            want = float(targets.get(mark, SEAM_TARGET_FALLBACK))
             audio, before_s, _ = join_with_target(audio, nxt, sr, want)
             # join_with_target 里 cur 是秒；达成值就是目标值（补零/裁剪后按构造精确）
             seams.append({"i": i, "after": prev_text[-8:], "mark": mark,
@@ -804,7 +814,8 @@ def handle(req: str, body: dict) -> dict:
         seam_report = {}
         audio, sr, bounds = synth_sentences(kind, body["text"], voice, takes=int(body.get("takes", 1)),
                                            do_trim=bool(body.get("trim", True)),
-                                           seam=body.get("seam"), report=seam_report)
+                                           seam=body.get("seam"), report=seam_report,
+                                           seam_targets=body.get("seam_target_ms"))
         stem = body.get("stem") or ("tts-%d" % int(time.time()))
         target = Path(body["out_dir"]).expanduser() if body.get("out_dir") else out_dir()
         target.mkdir(parents=True, exist_ok=True)

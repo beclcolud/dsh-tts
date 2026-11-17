@@ -114,6 +114,8 @@ def main() -> int:
     ap.add_argument("--libs", default=str(ROOT.parent / "_tts_probe" / "pylibs"))
     ap.add_argument("--voice", default="新闻联播音色", help="音色库名或预设名；不同音色的接缝表现差别很大")
     ap.add_argument("--bank-dir", default=str(ROOT.parent / "配音" / "voicebank"))
+    ap.add_argument("--pauses", default=None,
+                    help="覆盖停顿时长（JSON，键是句末标点），例如 {\"。\": 260}")
     args = ap.parse_args()
 
     work = make_workdir("dsh-tts-seam-")
@@ -167,15 +169,23 @@ def main() -> int:
             kind, voice = "custom", {"speaker": args.voice}
             print("音色：%s（预设）" % args.voice)
 
+        extra = {}
+        if args.pauses:
+            extra["seam_target_ms"] = json.loads(args.pauses)
+            print("停顿覆盖：%s" % extra["seam_target_ms"])
+
         for label, seam in (("A", "current"), ("B", "target")):
             print("渲染 %s（seam=%s）..." % (label, seam), flush=True)
             r = call("say", text=TEXT, kind=kind, voice=voice,
-                     stem="seam" + label, out_dir=str(work), seam=seam)
+                     stem="seam" + label, out_dir=str(work), seam=seam, **extra)
             wav = Path(r["wav"])
             bounds = json.loads(Path(r["bounds"]).read_text(encoding="utf-8"))
             starts = [s["start"] / bounds["sr"] for s in bounds["sentences"][1:]]
             runs, sr, at_b = silence_runs(wav, boundaries=starts)
-            mp3 = out / ("接缝%s-%s.mp3" % ("A-现状" if label == "A" else "B-按标点", args.voice))
+            tag = "A-现状" if label == "A" else "B-按标点"
+            if label == "B" and args.pauses:
+                tag += "-自定义"
+            mp3 = out / ("接缝%s-%s.mp3" % (tag, args.voice))
             try:
                 subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav), "-c:a", "libmp3lame",
                                 "-b:a", "192k", str(mp3)], check=True)
