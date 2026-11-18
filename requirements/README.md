@@ -45,7 +45,17 @@ B 方案（真装 4.57.6）未验证。`bootstrap_env.py --transformers auto` �
 - 环境这边：照常 `pip install nagisa==0.2.11`（满足依赖声明即可，不用它真能用）
 - 复现时**不需要**额外打补丁，这段逻辑跟着代码走
 
-### 3. sox 需要一个桩
+### 3. 分词器（可选，缺失自动降级）
+
+字幕按词断行需要中文分词。`jieba` 在 `base.txt` 里，但它是**软依赖**：
+`tts_server.py` 里 `import jieba` 失败就退回模型自带的 BPE token 边界，
+日志会写清楚用的哪个。BPE 能跑但质量差（会把"清早"拆开、又断不了"的|"）。
+
+安装注意：`pip install jieba` 在本机会因为源包构建失败，实际做法是
+`pip download jieba --no-deps` 拿 tar 包，解开后把 `jieba/` 目录直接放进依赖目录。
+纯 Python，无编译产物。
+
+### 4. sox 需要一个桩
 
 `qwen-tts` 声明依赖 `sox`（pysox），但 pysox 需要一个真正的 `sox` 可执行文件，这里没有。它只在 25Hz VQ 路径（`Qwen3TTSTokenizerV1`）被导入，而 12Hz 模型永远不会走那条路。
 

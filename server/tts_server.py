@@ -1181,18 +1181,26 @@ def handle(req: str, body: dict) -> dict:
                 r["start"] *= 1000.0
                 r["end"] *= 1000.0
 
-        # 顺带给出"可以在哪里断行"：用模型自己的 tokenizer 取 token 结束位置。
-        # 对齐器对中文是逐字吐的（tokenize_chinese_mixed），本身没有词信息；
-        # BPE token 虽然不等于词，但它的边界不会切在词中间（市场/热闹/地方 都是一个 token），
-        # 拿来当"允许断点"足够用，而且不引入任何新依赖。
+        # 顺带给出"可以在哪里断行"。对齐器对中文是逐字吐的，没有词信息，所以要另找。
+        # 首选 jieba（真正的分词：清早|的|菜市场|是|最|热闹|的|地方）；
+        # BPE token 边界只是近似——实测会把"清早"拆开、又会把"的地方"粘住，
+        # 既可能在词内断行，又断不了该断的地方。jieba 缺失时才退回 BPE。
         breaks = []
         try:
-            tk = model.processor.tokenizer
-            enc = tk(text, return_offsets_mapping=True, add_special_tokens=False)
-            ends = {int(e) for (_s, e) in enc["offset_mapping"] if 0 < int(e) < len(text)}
+            import logging
+            import jieba
+            jieba.setLogLevel(logging.ERROR)
+            ends = {int(e) for (_w, _s, e) in jieba.tokenize(text) if 0 < int(e) < len(text)}
             breaks = sorted(ends)
+            log("断行用 jieba，词边界 %d 个" % len(breaks))
         except Exception as exc:
-            log("WARN 取 token 断点失败（不影响对齐）：%r" % exc)
+            log("WARN jieba 不可用（%r），退回 BPE token 边界" % exc)
+            try:
+                tk = model.processor.tokenizer
+                enc = tk(text, return_offsets_mapping=True, add_special_tokens=False)
+                breaks = sorted({int(e) for (_s, e) in enc["offset_mapping"] if 0 < int(e) < len(text)})
+            except Exception as exc2:
+                log("WARN 取 token 断点也失败（不影响对齐）：%r" % exc2)
 
         return {"items": items, "count": len(items), "unit": "ms", "dur": round(dur, 3),
                 "breaks": breaks}
