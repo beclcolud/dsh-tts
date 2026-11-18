@@ -446,3 +446,25 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 <work>/dsh-tts
 - 归档后回归：`test_parsers.mjs`、`test_timeline_tool.mjs` 均通过（脚本只依赖 `lib/*.js` 与 `fixtures/`，路径未受影响）。
 
 *文档基于插件 v0.2.0（`package.json`）与 2026-11 的实机状态整理。*
+
+---
+
+## 十四、0.3.0：多语言、翻译、文档与隐私（2026-11-18）
+
+| 改动 | 位置 | 说明 |
+| --- | --- | --- |
+| 多语言 | `lib/index.js` + `lib/synth.js` + `server/tts_server.py` | `language: zh/en/ja` 贯穿断句（英文按 `.!?`+空格，避开小数/缩写）、语速估算（4.5 / 5.0 / 12 字符每秒）、ASR 质检、强制对齐与断词（英文按空格、中文 jieba、日文按助词/标点） |
+| 离线翻译 | `server/tts_server.py` + `lib/index.js` | `{req:"translate"}` 六向互译，本机 NLLB-200-600M（CPU）；`voiceover({translate:{from,to}})`；翻译失败即中断，不默默念原文 |
+| nagisa 替身 | `server/vendor/nagisa.py`（新） | Windows 上 nagisa 导入必崩；原来的空桩让**日文强制对齐**直接报 `'list' object has no attribute 'words'`。换成能真正分词的替身（CJK 逐字 + 拉丁按词），`ensure_nagisa()` 统一在加载 ASR/对齐器前安装 |
+| 日文断行 | `server/tts_server.py` | 断点放助词/标点之后，不再按字数硬切出「おはようございま / す。」 |
+| 队列强制成片 | `lib/index.js` | 队列不传 `mode` 时会走 auto，而 auto 遇描述型音色转 preview——出一堆候选却没成片。现在强制 `mode:'render'` |
+| 长文案可行重录 | `lib/synth.js` | 分批渲染的成品以前没有 `bounds.json`，句子级重录拼回对长文案不可用；现在把各分片的采样点偏移合并成成品边界 |
+| 分片不删只过滤 | `lib/index.js` | 分片是续跑依据，曾在成功后删除导致 `test_chunking` 挂 3 项；改为在产物列表里过滤 `-pN.*` |
+| 模型下载 | `bootstrap_env.py` + `models.manifest.json` | 新增 `--download-models`（默认 hf-mirror、跳过已弃用、下载后按字节数校验）；7 个 repo 名逐个用远端字节数核对过 |
+| 配置模板清空 | `cordis.patch.yml` + `lib/index.js` | 机器路径不再进仓库：新增 `path`/`paths` 设置类型与 6 个字段，从 `<workDir>/.dsh-tts/settings.json` → `<cwd>/配音/.dsh-tts/settings.json` → `~/.dsh-tts/settings.json` 依次查找 |
+| 文档重构 | `README.md` / `维护笔记.md`（新）/ `AI声明.md`（新）/ `分享与隐私.md`（仓库外） | README 只留「声明 / 下载与依赖 / 使用方法」；架构与踩坑移到维护笔记；新增 AI 生成声明与 MIT LICENSE |
+| 隐私清理 | 全仓库 | 历史重写（作者邮箱统一 noreply、抹掉历史里的本机路径、清除 `.pyc`）；`make-release.mjs` 生成脱敏分发包（白名单 + 清空路径 + 泄漏扫描 + UTF-8 zip） |
+
+**新增测试**：`test_lang_split.mjs`（5 项）、`test_settings_paths.mjs`（10 项）、`test_nagisa_stub.py`（13 项）。
+
+**已知限制**：英/日断词是近似（日文没有真形态素分析）；翻译是通用模型，术语需人工校对；NLLB 为 CC-BY-NC-4.0，**禁止商用**。
