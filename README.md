@@ -1,9 +1,7 @@
 # dsh-tts
 
-**给 DSH 用的本地配音工作台**：文案进，人声 + 逐句字幕（可选带字幕成片）出；
-也能按剪辑时间轴分段配音、从已有视频里反听字幕、对单句重录再拼回整段。
-
-**全程离线**：Qwen3-TTS + Qwen3-ASR + 强制对齐 + 本地翻译模型，不联网、不需要 API Key、不产生任何调用费用。
+给 DSH 用的本地配音工作台：**文案 → 人声 + 逐句字幕**（可出带字幕成片），中 / 英 / 日三语；
+也能按剪辑时间轴分段配音、从已有视频反听字幕、单句重录后拼回整段。**全程离线**，不需要 API Key。
 
 ---
 
@@ -12,302 +10,121 @@
 本项目的**代码、测试、文档基本都由生成式 AI 完成**；仓库维护者**没有编程能力**，无法独立审查代码。
 项目按「原样」提供、**不作任何担保**，使用风险自负。
 
-使用前请务必阅读 [**AI声明**](AI声明.md)：里面写清了 AI 参与了什么、维护者能保证什么（很少）、以及使用前该做什么检查。
+AI 参与了什么、维护者能保证什么、使用前该做哪些检查，见 **[AI声明](AI声明.md)**。
+许可证：MIT，见 [LICENSE](LICENSE)。
 
 ---
 
-## 定位：它是什么，不是什么
+## 下载内容与依赖
 
-**是**——为「把成稿文案变成可以直接进剪辑软件的人声」设计的工作流工具：
+### 1. 运行环境
 
-- 单人配音为主（中文 / 英文 / 日文），自动逐句字幕
-- 与 PR 剪辑绑定：按范围标记分段交付，时间对得上
-- 已有片子需要字幕时，直接从原片反听
-- 声音不满意时，**只重录那一句**，其余不动
-
-**不是**——不负责这些（明确不做，避免误用）：
-
-| 不是 | 说明 |
+| 项 | 要求 |
 | --- | --- |
-| 多说话人对口型 / 声音克隆换脸 | 只做单人旁白；多人对白只支持"按时间轴切段、每段一个音色" |
-| 云端 TTS 的替代品 | 音质取决于本机 0.6B 模型；不追求商业级拟真 |
-| 剪辑软件 | 不剪画面、不写回 PR 工程，只按标记给素材 |
-| 通用翻译/字幕工具 | 翻译只服务配音流程（中/英/日），不做字幕文件格式转换（只出 SRT） |
-| 实时配音 | 一次一段、串行跑；长文案按批合成，不追求低延迟 |
+| Python | 3.13（实测用 ComfyUI 便携包的 python_embeded） |
+| GPU | NVIDIA；单模型峰值约 3.5 GB，6 GB 显存够用 |
+| ffmpeg | 需要在 PATH 里 |
+| 磁盘 | 模型约 9.4 GB（全选含可选项约 18 GB） |
+| 网络 | **只有两步要联网**：装依赖、首次下模型。日常使用完全离线 |
 
-## 能做什么
+依赖版本已逐个钉死在 [requirements/](requirements/)（38 个包 + 三份 torch 变体），
+用 [bootstrap_env.py](bootstrap_env.py) 做探测 / 安装 / 打桩 / 自检。
 
-| 能力 | 怎么用 |
-| --- | --- |
-| 文案 → 配音 + 逐句字幕 | `voiceover`（音色：预设名 / 描述造音色 / 参考音视频克隆 / 音色库名） |
-| 直接出带字幕的 mp4 | `voiceover({ video: true })` |
-| 按 PR 时间轴分段配音 | `voiceover_timeline`：stage=plan 预检 → stage=run 合成 |
-| 从原片反听字幕 | 文案写 `04S/` 且正文留空 |
-| 单句重录并拼回整段 | `voiceover_retakes`（按采样点边界替换） |
-| 中/英/日 三语 | `language: zh / en / ja` |
-| 先翻译再配音 | `translate: { from, to }`（本机 NLLB，离线） |
-| 批量排队 | 工作台「队列」页：单段文案 / PR 时间轴都可排队 |
-| 看进度、取消、翻产物、管音色、改参数 | 右侧边栏「配音工作台」 |
+### 2. 模型（默认放在 `models/` 下）
 
-## 五分钟上手
+| 目录 | 用途 | 大小 | 必选 |
+| --- | --- | --- | --- |
+| `Qwen3-TTS-0.6B-CustomVoice` | 预设音色（Serena 等） | 2.5 GB | ✅ |
+| `Qwen3-TTS-0.6B-Base` | 参考音频克隆音色 | 2.5 GB | ✅ |
+| `Qwen3-ASR-0.6B` | 质检回读、反听字幕 | 1.9 GB | ✅ |
+| `Qwen3-ForcedAligner-0.6B` | 字级对齐（`align: true`、反听） | 1.8 GB | 可选 |
+| `nllb-200-distilled-600M` | 中/英/日 互译 | 2.5 GB | 可选 |
+| `Qwen3-TTS-1.7B-VoiceDesign` | 用一段描述造音色 | 4.5 GB | 可选 |
 
-```js
-// 1) 出第一条配音（默认音色）
-voiceover({ text: '今天聊三个问题。第一……', voice: '新闻联播音色' })
+清单位于 [models.manifest.json](models.manifest.json)（含每个模型应有的文件与字节数，可校验半截下载）。
+不装对齐器：`align: true` 与反听不可用，其余照常。不装翻译模型：只是没有翻译功能。
 
-// 2) 不确定用哪个音色：先出候选（描述造音色，自动入库）
-voiceover({ text: '……', voice: '低沉沙哑的中年男声', candidates: 3 })
+### 3. 安装
 
-// 3) PR 剪好的片：先预检，再合成
-voiceover_timeline({ xmlFile: '序列 01.xml', scriptFile: '文案.txt', stage: 'plan' })
-voiceover_timeline({ xmlFile: '序列 01.xml', scriptFile: '文案.txt', stage: 'run' })
-```
-
-装好之后，右侧边栏「+」→「配音工作台」有完整界面：任务进度、历史产物、音色库、队列、参数。
-
-## 文档地图
-
-| 文档 | 看它解决什么 |
-| --- | --- |
-| [使用手册](使用手册.md) | **日常操作看这个**：参数全表、调参、队列、多语言、常见问题 |
-| 本页（README） | 项目定位、架构、安装、**踩过的坑**（改代码前先读） |
-| [HANDOVER.md](HANDOVER.md) | 交接与维护：模块职责、各版本改了什么、已知限制 |
-| [requirements/README.md](requirements/README.md) | 依赖环境：版本钉死原因、三处上游坑、平台矩阵 |
-
-## 架构
-
-```
-DSH 宿主进程
-  └─ dsh-tts 插件 (lib/index.js)
-       ├─ 首次调用拉起 server/tts_server.py（常驻，空闲自动退）
-       ├─ 工作台接口：status / cancel / outputs / bank / config / queue / docx
-       ├─ 解析层：xml.js（手写 XML）、timeline.js、script.js、plan.js
-       ├─ 工具层：synth.js（分批/续跑/字幕分组）、picks.js（选版记录）
-       ├─ 运行时：guard.js（工具互斥）、queue.js（串行队列）、platform.js、docx.js（Word 抽取）
-       └─ 音色库：<workDir>/voicebank/index.json
-  server/tts_server.py
-       ├─ 一次只驻留一个模型（CustomVoice / VoiceDesign / Base / ASR / 对齐器）
-       ├─ 逐句合成 + 响度对齐 + 拼接（目标停顿 + 供体填充）
-       ├─ 对齐 / ASR / 翻译（NLLB，CPU）/ UVR 人声分离
-       └─ 页面：server/studio.html（工作台，按请求现读，改完刷新即生效）
-```
-
-## 安装
-
-DSH 运行时锁着 profile 的 package.json，必须**完全退出 DSH** 再装：
+**插件**（DSH 运行时锁着 profile，必须先完全退出 DSH）：
 
 ```bash
-node scripts/install.mjs           # 装进 desktop profile
+node scripts/install.mjs            # 安装
 node scripts/install.mjs --uninstall
 ```
 
-或双击 **一键安装.cmd**（Windows，会自己找 node、检查 DSH 是否退出、失败自动回滚）。
-Linux / macOS 用 `./一键安装.sh`，它只是转调同一个 `install.mjs`。
+Windows 也可以双击 `一键安装.cmd`；Linux / macOS 用 `./一键安装.sh`。装完重启 DSH。
 
-装完重启 DSH。
+**Python 依赖与模型校验**：
 
-**平台**：安装、路径、编码都已按平台分支处理（Windows 用 junction，POSIX 用符号链接；
-ffmpeg concat 列表只在 Windows 上把反斜杠换成斜杠）。但**所有实测都在 Windows + NVIDIA 上做过**，
-Linux / ROCm 的代码路径写好了、分支有单测，尚未真正执行过——上 Linux 请先跑 `python bootstrap_env.py --verify`。
-
-## 关键参数（cordis.patch.yml）
-
-| 键 | 默认 | 含义 |
-| --- | --- | --- |
-| defaultVoice | 新闻联播音色 | 不指定音色时用它 |
-| edge_keep_ms | 25 | 每句两端保留的静音（毫秒） |
-| fade_ms | 3 | 每段边缘淡入淡出，防爆音 |
-| overlap_ms | 10 | 接缝交叠时长 |
-| overlap_trigger_ms | 120 | **只有接缝空隙超过它才交叠** |
-| diction | true | 附加「咬字清晰、不要连读」指令 |
-| blur_mode / blur_sep / blur_words | punct / 、 / [答案, 牛奶] | 易粘连词的断字方式 |
-| idleShutdownMs | 300000 | 服务空闲多久自动退出（0 = 常驻） |
-| busyWaitMs | 0 | 忙的时候最多等多久（毫秒）。0 = 立即失败并提示，调大就排队 |
-| seamPolicy | target | 句间停顿策略：target 按句末标点规整到设定值 / current 只看模型给多少 |
-| seamPauses | {'。':180, '！':200, '？':200, '；':140} | 各句末标点对应的停顿时长（毫秒），可按语气场合调 |
-| language | zh | 默认合成语言：zh / en / ja |
-| mtModel | （按 workDir 的上一级 models/ 找） | 翻译模型目录（NLLB-200-distilled-600M） |
-| peakCeiling / toneTameDb | 0.95 / 0 | 峰值上限、高频层降（治"爆"与"刺"） |
-
-### 拼接规则（定稿）
-
-```
-逐句合成 → 两端紧裁 edge_keep_ms → 3ms 淡入淡出 → 句间响度对齐(±6dB)
-→ 按句末标点把接缝停顿规整到 seamPauses 里设定的毫秒数
-   （多的裁掉；少的补**与底噪同电平的柔和噪声**，不是纯 0）
-→ 按实际起始时间重算字幕
+```bash
+python bootstrap_env.py                 # 只探测
+python bootstrap_env.py --install       # 安装依赖（--torch none 可复用宿主 torch）
+python bootstrap_env.py --check-models  # 校验模型文件是否完整
+python bootstrap_env.py --verify        # 起服务合成一句 + ASR 回读，端到端自检
 ```
 
-> 旧版本的「空隙 >120ms 才交叠 10ms」已经不再触发：裁切与测量改用同一套能量判据后，
-> 接缝稳定在保留边距的物理下限（约 50ms），远低于触发线。交叠代码留作开关但不参与默认流程。
+---
 
-## 踩坑记录
+## 简要使用方法
 
-> 以下每一条都是真实踩过的，附现象与证据。改代码前先读这一节，能省下大量重复试错。
+### 1. 配置（`cordis.patch.yml`）
 
-### 一、环境与进程
+最少填这几项，其余留默认即可：
 
-**1. 沙箱内加载不了 CUDA / cffi 动态库**
-现象：DLL load failed while importing _cffi_backend: 拒绝访问；torch 初始化失败。
-根因：DSH 沙箱的进程令牌限制加载工作区里的 .pyd。
-修法：服务必须由插件（宿主进程）拉起，或命令走完整权限。这也是选「常驻服务」而不是「每次调用子进程」的原因之一。
+```yaml
+pythonPath: '…/python_embeded/python.exe'
+libs:       '…/_tts_probe/pylibs'
+models:
+  custom: '…/Qwen3-TTS-0.6B-CustomVoice'
+  base:   '…/Qwen3-TTS-0.6B-Base'
+  asr:    '…/Qwen3-ASR-0.6B'
+workDir: '…/配音'        # 产物根目录
+defaultVoice: '新闻联播音色'
+```
 
-**2. spawn 的 stdio 不能直接传未打开的 WriteStream**
-现象：The argument 'stdio' is invalid. Received WriteStream { fd: null ... }。
-根因：createWriteStream 异步打开，spawn 要求 fd 已就绪。
-修法：openSync(logFile, 'a') 拿 fd 再传。
+可选项：`models.aligner`、`mtModel`、`language`（zh/en/ja）、停顿与音质参数——见 [使用手册 §8](使用手册.md)。
 
-**3. 子进程的 TEMP 可能不可用**
-现象：Python 启动即 No usable temporary directory found。
-修法：服务入口先读配置里的 work_dir，建 work/.tmp 并把 TEMP/TMP/TMPDIR 与 tempfile.tempdir 指过去，**在导入 torch 之前**完成。
+### 2. 三个工具
 
-**4. 僵尸服务进程会毒化后续所有请求**
-现象：一次失败后，之后每次都报 Artifact of type=precompile already registered（torch 被导入了一半）。
-根因：进程内模块缓存坏了，只有新进程能恢复；它还占着端口，插件以为服务健康。
-修法：用 HTTP {req: shutdown} 停掉（taskkill 常因权限失败），再让插件重新拉起。插件也加了这类错误自动重启一次再重试。
+```js
+// 一段文案 → mp3 + 逐句 SRT（+ 可选 mp4）
+voiceover({ text: '今天聊三个问题。第一……', voice: '新闻联播音色' })
 
-**5. 插件入口路径容易差一层**
-现象：找不到服务端脚本 ...dsh-tts/lib/server/tts_server.py。
-根因：import.meta.dirname 是 lib/，不是包根。
-修法：path.resolve(here, '..')。
+// 按 PR 时间轴分段配音：先预检，再合成
+voiceover_timeline({ xmlFile: '序列 01.xml', scriptFile: '文案.txt', stage: 'plan' })
+voiceover_timeline({ xmlFile: '序列 01.xml', scriptFile: '文案.txt', stage: 'run' })
 
-### 二、音频质量（这一节最贵）
+// 某一句重录，并拼回整段
+voiceover_retakes({ text: '……', segment: 3, takes: 3 })
+voiceover_retakes({ text: '……', segment: 3, use: 2, full: '长文案回归' })
+```
 
-**6. 第一个字听起来缺了前半截**
-现象：整段音频第一个字像被切掉。
-根因：静音裁剪用 2% 阈值 + 只保留 20ms，而克隆音色的起音是缓慢爬升（40~80ms 才到可闻能量），被判成静音切掉了。
-证据：裁剪后 30ms 就到峰值；未裁剪版本前 120ms 全零、之后才爬升。
-修法：阈值降到 0.5%，两端各保留 edge_keep_ms（25ms），再加 3ms 淡入淡出。
+常用开关：`language: zh/en/ja`、`translate: { from, to }`、`align: true`（字级字幕）、
+`video: true`（出成片）、`toneTameDb: -4`（声音刺）、`peakCeiling: 0.7`（声音爆）。
 
-**7. 句与句之间有 0.26 秒数字静音**
-现象：视频后面一片空白，像断了一口气。
-根因：逐句合成后拼接，每段两端各留了静音，中间又插 120ms 间隔，叠起来就是 260ms 纯零（-180 dB）。
-证据：逐 20ms 测能量，2.30→2.56s 全是 -180 dB。
-修法：紧裁到 25ms + 有真实空隙才交叠；纯零降到 0.002 秒。
+### 3. 工作台
 
-**8. 交叠不能无脑加**
-现象：交叠 10ms 在「视频」后面自然，在「答案」后面很赶。
-证据：两个接缝实际空隙不同（视频后 180ms、肚子→答案 93ms）。
-修法：空隙 >120ms 才交叠，否则直接对接。
+右侧边栏「+」→「配音工作台」，五页：
 
-**9. 鼻音重不能靠频谱指标判断**
-现象：一度用 200-600Hz / 1.2-3.5kHz 比值当鼻音指标挑版本。
-结果：指标最差的 edge 晓晓，用户听着最舒服；指标最好的版本反而被嫌鼻音重。
-结论：指标与听感不对应，已弃用。同理，用它做「每次出 2 遍挑最好」的择优逻辑也一起关掉（默认 takes=1）。
-
-**10. 同一句话的时长能差 0.5 秒**
-现象：同一文案重跑一次，整段从 13.09s 变成 14.20s。
-根因：0.6B 每次采样不同，句子时长自然波动。
-结论：逐句选版（voiceover_retakes）是必要的，不是锦上添花。
-
-**11. 答案这类词会念成一坨**
-现象：答的韵母还没收住，案就起来了，听成 dàn。
-修法：词表内插顿号（答、案），但断点长度由模型决定（约 400ms）不可控；试过拆字拼接精确控制断点，元音衔接不自然，放弃。
-补充：克隆音色不需要断字（它自己念得清），所以断字是音色属性（voice.blur=false），不是全局开关。
-
-**12. 哒声不是爆音，是模型的口型噪音**
-现象：视频结尾有一声哒。
-排查：全曲最大样本间跳变仅 0.0356（约 -29 dBFS），尾音平滑衰减到零，没有拼接爆音；adeclick 无效。
-结论：源音频里就有，只能换一版重录（用 voiceover_retakes，句尾过零率 1850 → 766 的那版就没了）。
-
-### 三、其他
-
-**13. ffmpeg 出片比音频长 1.8 秒**
-根因：-shortest 在套了 subtitles 滤镜后不可靠，编码器会多跑。
-修法：先 ffprobe 拿音频时长，显式 -t <duration>。
-
-**14. 字幕滤镜要用相对路径 + cwd**
-根因：Windows 路径里的冒号和反斜杠在 filter 里要转义，容易出错。
-修法：spawn 时把 cwd 设成字幕所在目录，filter 里只写文件名。
-
-**15. 文件名里的百分号会让分离器打不开**
-现象：bilibili_BV1Ai4y157VQ_%E9%9F%B3%E9%A2%91.mp4 → Format not recognised。
-修法：先 ffmpeg 转成干净文件名的 WAV 再处理。素材命名别带 %、#、&。
-
-**16. 音色库名被误判成要出候选**
-现象：传库名调用却返回 3 个短样音。
-根因：判断只看音色类型，没看是不是来自库。
-修法：库命中的条目标记 fromBank，直接合全长。
-
-### 四、已排除的方案（别再试一遍）
-
-| 方案 | 为什么排除 |
+| 页 | 干什么 |
 | --- | --- |
-| Qwen3-TTS 1.7B CustomVoice | 跨句主频波动 27~57Hz（0.6B 只有 1.2Hz）；关掉采样反而更差（54.8Hz、时长 19s）；Vivian 甚至 15 分钟跑不完一段 |
-| 关采样 + 固定种子求稳定 | 贪心解码让 1.7B 变慢变飘，不解决问题 |
-| 拆字拼接控制断点 | 断点确实精确，但元音衔接不自然，不如直接插顿号 |
-| 全自动挑最好的 take | 现有指标（鼻音比/过零率）与听感不对应，一律改成人工选版 |
-| 用 EQ 消除鼻音 | 能提亮，但实测未能解决，根因在音色与发音本身 |
+| 任务 | 实时进度、取消 |
+| 历史 | 产物列表，试听 / 下载 |
+| 音色库 | 试听、改名、删除、用描述新建 |
+| 队列 | 批量排队（单段文案 / PR 时间轴），串行跑 |
+| 参数 | 查看并修改配置，标注哪些需重启 |
 
+页面文件是 `server/studio.html`，**改完刷新即生效**，不用重启 DSH。
 
-### 五、第一次真实项目（PR 十段五分钟片）暴露的问题
+---
 
-**17. 字幕时间轴不是语音边界，不能拿来当剪辑点**
-现象：按字幕时间切音频，前一版残留了半句、后一版开头被削掉。
-根因：逐句字幕时间是按字数比例分配的**估算值**（再按静音吸附），与实际发音边界能差近一秒。
-结论：字幕时间只用于显示。真要切片，必须做能量检测找静音段、把切点吸附到静音中点；否则整段重跑更稳。
+## 文档
 
-**18. 长段落一次请求会超时**
-现象：897 字的段落单次合成 `HeadersTimeoutError`（网关约 5 分钟断连接）。
-根因：Node 内置 fetch（undici）默认 headersTimeout 300 秒，与插件自己的超时是两回事。
-修法：按句切分、每批 ≤300 字，合成后拼接，字幕时间按累计时长偏移。
-
-**19. 只配音的段不该生成字幕**
-现象：`03v/` 明明写的是只配音，全片字幕里还是混进了纲领那一段的 19 条。
-根因：字幕收集没区分 mode。
-修法：`mode=voice` 的段跳过字幕收集；合并全片字幕时按段取各自的 srt 再按标记入点偏移，不要拿合并后的 srt 再过滤。
-
-**20. 克隆音色对某些词有固定发音偏移，换说法比重录有效**
-实测：`行色匆匆` 三版全部在同一位置断开；`展厅` 稳定念成 `掌厅`；`一大` 的「一」被吞或被念错。
-规律：不是随机采样问题，是这个词组的固定读法。重录命中率约 30%，**换说法基本一次就过**：
-
-| 原词 | 换成 | 结果 |
-| --- | --- | --- |
-| 行色匆匆 | 匆匆走进 | ✅ |
-| 展厅 | 展览厅 | ✅ |
-| 一大（04 段） | 中国共产党第一次全国代表大会 | ✅ |
-| 一大（06 段） | 壹大 | ✅ |
-| 一大各地区代表 | 各地代表 | ✅ |
-
-**21. 输出响度必须先归一，否则会被当成「爆麦」**
-现象：某段听着刺耳、像削波。实测峰值只有 0.08（比满幅低 22 dB），波形没有削波。
-根因：早期只做了句间相对响度对齐，单一句话时等于没调，成片音量忽大忽小；播放器拉满音量会把模型自身的爆破音放大成「爆」。
-修法：成片后统一按 **RMS −20 dBFS** 归一，峰值 0.95 兜底。
-
-**22. 真实 PR XML 的四个坑**
-| 坑 | 表现 | 处理 |
-| --- | --- | --- |
-| 顶层直接是 `sequence` | 标准 FCP XML 外面还有 `xmeml` 包裹 | 两种结构都要认 |
-| 标记名带斜杠后缀 | `01/` `03v/` `07s/` | 取名字里的数字做编号，后缀不当编号 |
-| 媒体路径是 percent-encoded UTF-8 | 直接 `decodeURIComponent` 出乱码 | 按 `%XX` 解成字节，再整体 `Buffer.toString('utf8')` |
-| 同一素材挂在多条轨道上 | 按时间范围切音频会把同一段抓三遍，转写结果重复 | 按区间覆盖去重，只取未被覆盖的那部分 |
-
-## 已知局限
-
-- **前后鼻音**：-in/-ing 这类字偶有偏差，标点/指令/EQ 都改不了发音本身；ASR 转写正常，说明是音值问题而非读错字。
-- **0.6B 的时长波动**：同一句 ±0.5s，需要逐句选版才能稳定。
-- **显存**：单模型峰值约 3.5GB，6GB 卡够用；模型只能串行驻留，切换 5~8 秒。
-- **英文/日文的断词是近似的**：中文用 jieba，英文按空格，日文按「助词/标点」——日文没有真正的形态素分析，专有名词可能断得不理想。
-- **翻译是通用模型**（NLLB-600M）：术语与语气会有偏差，重要文案建议人工校对。
-- **Windows 上缺 nagisa**：日文对齐靠一个规则分词替身（`server/vendor/nagisa.py`），能跑但不如真库准。
-- **平台**：全部实测在 Windows + NVIDIA 上完成；Linux/ROCm 代码路径已有、平台分支有单测，但未真机验证。
-- **时间轴只解析 PR 的 FCP 7 XML**：达芬奇/FCP X 原生格式、EDL 不支持（会给明确提示）。
-
-## 目录
-
-```
-dsh-tts/
-├── lib/            index.js（三个工具 + 工作台接口）· client.js（侧边栏入口 + 状态点）
-│                   synth.js · picks.js · queue.js · guard.js · platform.js · docx.js
-│                   xml.js · timeline.js · script.js · plan.js · audio.js · clips.js
-├── server/         tts_server.py · studio.html（工作台页面）
-│                   vendor/（sox 桩、nagisa 替身）
-├── scripts/        install.mjs · bootstrap 相关 · test_*.mjs/py · fixtures/
-│                   md_to_docx.py（Markdown 转 Word）
-├── requirements/   固定版本的依赖清单与平台说明
-├── cordis.patch.yml    运行配置（音色、停顿、并发、语言、翻译模型…）
-├── models.manifest.json 模型清单与校验
-├── 使用手册.md · HANDOVER.md · README.md
-├── 一键安装.cmd / 一键卸载.cmd（Windows）· 一键安装.sh / 一键卸载.sh（POSIX）
-└── bootstrap_env.py    环境自举：探测 / 安装 / 打桩 / 自检
-```
+| 文档 | 看它解决什么 |
+| --- | --- |
+| [使用手册](使用手册.md) | **日常操作**：参数全表、调参、队列、多语言、常见问题 |
+| [维护笔记](维护笔记.md) | 架构、拼接规则、**踩坑记录**（改代码前先读）、已知局限 |
+| [HANDOVER](HANDOVER.md) | 交接：模块职责、版本变更、剩余问题 |
+| [requirements](requirements/README.md) | 依赖环境：为什么钉版本、三处上游坑、平台矩阵 |
+| [AI声明](AI声明.md) | AI 参与范围与责任边界 |
