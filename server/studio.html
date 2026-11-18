@@ -54,7 +54,7 @@
   var BASE = '/api/dsh-tts/'
   // 页面需要的接口版本；插件启动时会在 status 里回自己的版本
   var NEED_API = 2
-  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { type: 'text', text: '', textName: '', voice: '', title: '', xmlName: '', scriptName: '', sequence: '' },
+  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { type: 'text', text: '', textName: '', voice: '', title: '', xmlName: '', scriptName: '', sequence: '', language: 'zh', translate: 'none' },
     voiceOptions: [],
     upload: { xmlText: '', scriptText: '' }, saving: false, saveMsg: '', loading: false, error: '', creating: false }
   function el(id) { return document.getElementById(id) }
@@ -215,7 +215,14 @@
         + '<span class="dim">' + (state.draft.textName ? esc(state.draft.textName) : '可选') + '</span></div>'
         + '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分（也可以从上面的文件导入）" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
     }
-    h += '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" list="qvoiceopts" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认：' + esc((state.status && state.status.defaultVoice) || '未设置') + '）" style="max-width:46%">'
+    var LANGS = [['zh', '中文'], ['en', '英文'], ['ja', '日文']]
+    var TRANS = [['none', '不翻译'], ['en>zh', '英→中'], ['zh>en', '中→英'], ['ja>zh', '日→中'], ['zh>ja', '中→日'], ['en>ja', '英→日'], ['ja>en', '日→英']]
+    h += '<div class="row" style="margin-top:6px"><span class="dim">语言</span><select class="act" id="qlang">'
+      + LANGS.map(function (x) { return '<option value="' + x[0] + '"' + (state.draft.language === x[0] ? ' selected' : '') + '>' + x[1] + '</option>' }).join('')
+      + '</select><span class="dim">翻译</span><select class="act" id="qtrans">'
+      + TRANS.map(function (x) { return '<option value="' + x[0] + '"' + (state.draft.translate === x[0] ? ' selected' : '') + '>' + x[1] + '</option>' }).join('')
+      + '</select><span class="dim">' + (state.draft.translate === 'none' ? '（翻译走本机模型，离线，首次约 2 秒加载）' : '（会先把文案翻译成目标语言再合成）') + '</span></div>'
+      + '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" list="qvoiceopts" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认：' + esc((state.status && state.status.defaultVoice) || '未设置') + '）" style="max-width:46%">'
       + '<datalist id="qvoiceopts">' + (state.voiceOptions || []).map(function (o) {
         return '<option value="' + esc(o.value) + '">' + esc(o.group) + '</option>'
       }).join('') + '</datalist>'
@@ -379,6 +386,14 @@
     }
     var qseq = el('qseq')
     if (qseq) qseq.oninput = function () { state.draft.sequence = qseq.value }
+    var qlang = el('qlang')
+    if (qlang) qlang.onchange = function () { state.draft.language = qlang.value; render() }
+    var qtr = el('qtrans')
+    if (qtr) qtr.onchange = function () {
+      state.draft.translate = qtr.value
+      if (qtr.value !== 'none') state.draft.language = qtr.value.split('>')[1]
+      render()
+    }
     var qv = el('qvoice')
     if (qv) qv.oninput = function () { state.draft.voice = qv.value }
     var qti = el('qtitle')
@@ -398,6 +413,7 @@
           xmlText: state.upload.xmlText, xmlName: state.draft.xmlName,
           scriptText: state.upload.scriptText, scriptName: state.draft.scriptName,
           sequence: state.draft.sequence.trim(), voice: state.draft.voice.trim(), title: state.draft.title.trim(),
+          language: state.draft.language,
         })
         state.upload = { xmlText: '', scriptText: '' }
         state.draft = Object.assign({}, state.draft, { xmlName: '', scriptName: '', title: '' })
@@ -407,7 +423,12 @@
       if (!text) { state.error = '先写文案再加入队列'; render(); return }
       // 没填文件名就用导入的文件名（去掉扩展名），省得每次手输
       var autoTitle = state.draft.textName ? state.draft.textName.replace(/\.[^.]+$/, '') : ''
-      qpost('add', { text: text, voice: state.draft.voice.trim(), title: state.draft.title.trim() || autoTitle })
+      var tr2 = state.draft.translate && state.draft.translate !== 'none' ? state.draft.translate.split('>') : null
+      qpost('add', {
+        text: text, voice: state.draft.voice.trim(), title: state.draft.title.trim() || autoTitle,
+        language: state.draft.language,
+        ...(tr2 ? { translateFrom: tr2[0], translateTo: tr2[1] } : {}),
+      })
       state.draft = Object.assign({}, state.draft, { text: '', textName: '', title: '' })
     }
     Array.prototype.forEach.call(document.querySelectorAll('.qretry'), function (b) {

@@ -111,10 +111,40 @@ def fmt_ts(sec: float) -> str:
     return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
 
 
-def split_sentences(text: str) -> list:
-    parts = re.split(r"(?<=[。！？!?；;\n])", text)
+# 语言：内部用 zh/en/ja，模型接口用 Chinese/English/Japanese
+LANG_ALIAS = {"zh": "Chinese", "en": "English", "ja": "Japanese",
+              "chinese": "Chinese", "english": "English", "japanese": "Japanese"}
+
+
+def lang_of(value, default: str = "zh") -> str:
+    v = str(value or "").strip().lower()
+    if v in ("zh", "chinese"): return "zh"
+    if v in ("en", "english"): return "en"
+    if v in ("ja", "japanese"): return "ja"
+    return default
+
+
+# 英文里这些缩写后面的点不算句末
+_EN_ABBR = re.compile(r"\b(Mr|Mrs|Ms|Dr|Prof|St|vs|etc|Inc|Ltd|Jr|No|Fig|e\.g|i\.e)\.", re.IGNORECASE)
+
+
+def split_sentences(text: str, lang: str = "zh") -> list:
+    """按语言切句。
+
+    中文/日文按 。！？； 与换行切；英文按「标点 + 空白」切，
+    并避开小数、缩写、网址这类假句号。
+    """
+    src = str(text or "")
+    if lang_of(lang) == "en":
+        protected = _EN_ABBR.sub(lambda m: m.group(1) + "\x00", src)
+        # 3.5 / 1.2.3 这类数字中间的点不切
+        protected = re.sub(r"(?<=\d)\.(?=\d)", "\x00", protected)
+        parts = re.split(r"(?<=[.!?])[ \t]+|\n+", protected)
+        out = [p.replace("\x00", ".").strip() for p in parts if p.strip()]
+        return out or [src.strip()]
+    parts = re.split(r"(?<=[。！？!?；;\n])", src)
     out = [p.strip() for p in parts if p.strip()]
-    return out or [text.strip()]
+    return out or [src.strip()]
 
 
 class Models:
@@ -765,7 +795,8 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         targets.update({str(k): float(v) for k, v in CONFIG["seam_target_ms"].items()})
     if isinstance(seam_targets, dict):
         targets.update({str(k): float(v) for k, v in seam_targets.items()})
-    _sentences = split_sentences(text)
+    _sent_lang = lang_of(voice.get("language") if isinstance(voice, dict) else None)
+    _sentences = split_sentences(text, _sent_lang)
     # 真实进度：UI 要显示"已完成第几句"，这个只有逐句循环里才有。
     # 生命周期跟着请求走——do_POST 的 finally 里会连同 busy 一起清掉。
     STATE["progress"] = {"done": 0, "total": len(_sentences), "unit": "sentence"}
@@ -1063,7 +1094,73 @@ def pick_clean_segment(wav_path: Path, target: float = 9.0) -> dict:
     return {"audio": seg, "sr": sr, "start_sec": round(start / sr, 2), "dur": round(len(seg) / sr, 2)}
 
 
-def _align_items(text: str, a, sr: int):
+# —— 翻译（NLLB-200-distilled-600M，CPU 跑，不占显存）——
+NLLB_CODE = {"zh": "zho_Hans", "en": "eng_Latn", "ja": "jpn_Jpan"}
+MT = {"tok": None, "model": None, "path": ""}
+
+
+def mt_load():
+    """懒加载翻译模型；加载 2.4GB 权重，首次调用会慢 10-30 秒。"""
+    if MT["model"] is not None:
+        return MT["tok"], MT["model"]
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    # 默认放在 work_dir 的上一级 models/ 下（本机就是 E:\<工作区>\models\...）
+    default_mt = Path(CONFIG.get("work_dir") or ".").resolve().parent / "models" / "nllb-200-distilled-600M"
+    path = CONFIG.get("mt_model") or str(default_mt)
+    if not Path(path).exists():
+        raise ValueError("找不到翻译模型：%s（需要 NLLB-200-distilled-600M）" % path)
+    log("加载翻译模型（CPU）:", path)
+    tok = AutoTokenizer.from_pretrained(path)
+    model = AutoModelForSeq2SeqLM.from_pretrained(path)
+    model.eval()
+    MT.update({"tok": tok, "model": model, "path": path})
+    log("翻译模型就绪")
+    return tok, model
+
+
+def _mt_chunks(text: str, src: str, limit: int = 300) -> list:
+    """按源语言切句再凑块：NLLB 单次 512 token，长文必须拆。"""
+    sents = split_sentences(text, src)
+    chunks, buf = [], ""
+    for s in sents:
+        if buf and len(buf) + len(s) > limit:
+            chunks.append(buf)
+            buf = s
+        else:
+            buf = (buf + " " + s).strip() if buf else s
+    if buf:
+        chunks.append(buf)
+    return chunks
+
+
+def translate_text(text: str, src: str, dst: str) -> str:
+    import torch
+    src, dst = lang_of(src, "zh"), lang_of(dst, "en")
+    if src == dst:
+        return str(text)
+    tok, model = mt_load()
+    tok.src_lang = NLLB_CODE[src]
+    target_id = tok.convert_tokens_to_ids(NLLB_CODE[dst])
+    pieces = []
+    with torch.no_grad():
+        for chunk in _mt_chunks(text, src):
+            ids = tok(chunk, return_tensors="pt", truncation=True, max_length=512).input_ids
+            gen = model.generate(ids, forced_bos_token_id=target_id, max_length=512, num_beams=4)
+            pieces.append(tok.batch_decode(gen, skip_special_tokens=True)[0].strip())
+    joiner = " " if dst == "en" else ""
+    return joiner.join(p for p in pieces if p)
+
+
+def _ms_items(items, dur, a, sr):
+    """上游注解写 seconds、实际是毫秒；按音频时长判断一次再统一。"""
+    if items and max(r["end"] for r in items) <= dur * 1.05:
+        for r in items:
+            r["start"] *= 1000.0
+            r["end"] *= 1000.0
+    return items
+
+
+def _align_items(text: str, a, sr: int, language: str = "zh"):
     """把文本对到音频上，返回 (字级时间, 允许断行点)。
 
     单位统一成毫秒。上游 ForcedAlignItem 的注解写 seconds，实际产出是
@@ -1074,19 +1171,24 @@ def _align_items(text: str, a, sr: int):
     没有则退回模型自己的 BPE token 边界（近似，会把"清早"拆开、又粘住"的地方"）。
     """
     model = MODELS.get("aligner")
-    res = model.align(audio=[(a, sr)], text=[text], language=["Chinese"])
+    res = model.align(audio=[(a, sr)], text=[text], language=[LANG_ALIAS[lang_of(language, "zh")]])
     items = []
     for it in (getattr(res[0], "items", None) or []):
         items.append({"text": str(getattr(it, "text", "")),
                       "start": float(getattr(it, "start_time", 0.0)),
                       "end": float(getattr(it, "end_time", 0.0))})
     dur = len(a) / float(sr)
-    if items and max(r["end"] for r in items) <= dur * 1.05:
-        for r in items:              # 落在秒域，换算成毫秒
-            r["start"] *= 1000.0
-            r["end"] *= 1000.0
+    items = _ms_items(items, dur, a, sr)
 
     breaks = []
+    _lang = lang_of(language, "zh")
+    if _lang == "en":
+        # 英文按空格断词：数字/标点连着的地方不算词边界
+        breaks = sorted({i + 1 for i, ch in enumerate(text)
+                         if ch == " " and 0 < i + 1 < len(text)})
+        log("断行用空格，词边界 %d 个" % len(breaks))
+        items = _ms_items(items, dur, a, sr)
+        return items, breaks
     try:
         import logging
         import jieba
@@ -1244,7 +1346,7 @@ def handle(req: str, body: dict) -> dict:
             # 上面按字数分配的那份 srt 保留着，对齐失败时还能用。
             try:
                 MODELS.free_all()
-                items, breaks = _align_items(text, a, sr)
+                items, breaks = _align_items(text, a, sr, lang_of(body.get("language")))
                 out["items"] = items
                 out["breaks"] = breaks
                 out["timestamps"] = True
@@ -1263,7 +1365,7 @@ def handle(req: str, body: dict) -> dict:
         audio_path = Path(body["audio"])
         text = str(body["text"])
         a, sr = load_wav(audio_path)
-        items, breaks = _align_items(text, a, sr)
+        items, breaks = _align_items(text, a, sr, lang_of(body.get("language")))
         return {"items": items, "count": len(items), "unit": "ms",
                 "dur": round(len(a) / float(sr), 3), "breaks": breaks}
 
@@ -1274,6 +1376,15 @@ def handle(req: str, body: dict) -> dict:
 
     if req == "splice":
         return splice_sentence(body)
+
+    if req == "translate":
+        text = str(body.get("text") or "")
+        if not text.strip():
+            raise ValueError("要翻译的文本为空")
+        src = lang_of(body.get("from"), "zh")
+        dst = lang_of(body.get("to"), "en")
+        out_text = translate_text(text, src, dst)
+        return {"text": out_text, "from": src, "to": dst, "chars": len(out_text)}
 
     if req == "bank_list":
         return {"entries": bank_load()}

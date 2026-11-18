@@ -18,6 +18,10 @@
           aligner: 'E:\<工作区>\models\Qwen3-ForcedAligner-0.6B'
         # 输出根目录；留空则落在当前会话工作区的 配音/ 下
         workDir: 'E:\<工作区>\配音'
+        # 默认合成语言：zh / en / ja
+        language: 'zh'
+        # 翻译模型（NLLB-200-distilled-600M）。留空则按 workDir 的上一级 models/ 找。
+        mtModel: 'E:\<工作区>\models\nllb-200-distilled-600M'
         defaultVoice: '新闻联播音色'
         idleShutdownMs: 300000
         # —— 发音微调（都是实测调出来的，改动前先听）——

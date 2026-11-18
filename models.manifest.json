@@ -100,6 +100,24 @@
         "vocab.json",
         "merges.txt"
       ]
+    },
+    {
+      "key": "mt",
+      "required": false,
+      "role": "翻译（中/英/日互译，可选；不装就只是没有翻译功能）",
+      "dir": "nllb-200-distilled-600M",
+      "bytes": 2482648914,
+      "keyFile": "pytorch_model.bin",
+      "keyFileBytes": 2460457927,
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "pytorch_model.bin",
+        "sentencepiece.bpe.model",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ]
     }
   ],
   "uvr": {
