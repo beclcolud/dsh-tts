@@ -283,17 +283,25 @@ def install_sox_stub(libs: Path) -> None:
 
 
 def probe_models(libs: Path) -> bool:
-    """在子进程里导入两个模型包，带上 tts_server.py 里那套 nagisa 假模块。"""
+    """在子进程里导入两个模型包，带上服务端那套 nagisa 替身。
+
+    替身不是空桩：qwen-asr 的日文对齐会真的调用 nagisa.tagging(text).words，
+    这里必须和 tts_server.py 用同一个 server/vendor/nagisa.py。
+    """
+    stub = Path(__file__).resolve().parent / "server" / "vendor" / "nagisa.py"
     code = (
-        "import sys, types\n"
+        "import sys, importlib.util\n"
         "sys.path.insert(0, %r)\n"
-        "fake = types.ModuleType('nagisa')\n"
-        "fake.tagging = lambda *a, **k: []\n"
-        "sys.modules.setdefault('nagisa', fake)\n"
+        "if 'nagisa' not in sys.modules:\n"
+        "    spec = importlib.util.spec_from_file_location('nagisa', %r)\n"
+        "    mod = importlib.util.module_from_spec(spec)\n"
+        "    spec.loader.exec_module(mod)\n"
+        "    sys.modules['nagisa'] = mod\n"
         "import transformers\n"
         "import qwen_tts, qwen_asr\n"
         "print('VERSION', transformers.__version__)\n"
-    ) % str(libs)
+        "print('NAGISA', len(sys.modules['nagisa'].tagging('おはよう').words))\n"
+    ) % (str(libs), str(stub))
     rc, out = _py(code)
     if rc == 0:
         say("        transformers 实际版本：" + (out.split("VERSION")[-1].strip() or "?"))

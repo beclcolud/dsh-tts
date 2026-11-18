@@ -36,11 +36,11 @@ B 方案（真装 4.57.6）未验证。`bootstrap_env.py --transformers auto` �
 
 对应文件：`transformers-4.57.3.txt` / `transformers-4.57.6.txt`。
 
-### 2. nagisa 装得上但导入必崩
+### 2. nagisa 装得上但导入必崩（已用替身解决）
 
 `nagisa 0.2.11` 是 `qwen-asr` 的依赖，但它要 `dynet_config`——那是编译期才有的东西，Windows 上没有。装上之后 `import nagisa` 直接 `ModuleNotFoundError`。
 
-**修法不在环境里，在服务端代码里**：`tts_server.py` 在导入 `qwen_asr` 之前，往 `sys.modules` 塞了一个只有 `tagging()` 的假 nagisa。所以：
+**修法不在环境里，在服务端代码里**：`tts_server.py` 在导入 `qwen_asr` 之前，往 `sys.modules` 塞 `server/vendor/nagisa.py`——它不是空桩，而是**能真正分词**的替身（CJK 逐字 + 拉丁按词）。原因：qwen-asr 的**日文强制对齐**会真的调用 `nagisa.tagging(text).words`，返回空列表会让它直接报 `'list' object has no attribute 'words'`。所以：
 
 - 环境这边：照常 `pip install nagisa==0.2.11`（满足依赖声明即可，不用它真能用）
 - 复现时**不需要**额外打补丁，这段逻辑跟着代码走

@@ -147,6 +147,24 @@ def split_sentences(text: str, lang: str = "zh") -> list:
     return out or [src.strip()]
 
 
+def ensure_nagisa() -> None:
+    """给 qwen_asr 装上 nagisa 的替身。
+
+    nagisa 0.2.11 在 Windows 上导入必崩（缺 dynet_config，dyNET 的编译期产物）。
+    qwen-asr 只在**日文强制对齐**里用它一次：nagisa.tagging(text).words。
+    所以塞一个真能分词的替身（server/vendor/nagisa.py），而不是返回空列表的桩——
+    空列表会让日文对齐直接报 'list' object has no attribute 'words'。
+    """
+    if "nagisa" in sys.modules:
+        return
+    import importlib.util
+    stub_path = Path(__file__).resolve().parent / "vendor" / "nagisa.py"
+    spec = importlib.util.spec_from_file_location("nagisa", stub_path)
+    stub = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stub)
+    sys.modules["nagisa"] = stub
+
+
 class Models:
     """Lazily loads one TTS/ASR model at a time and frees the previous one."""
 
@@ -172,21 +190,15 @@ class Models:
             self.obj = Qwen3TTSModel.from_pretrained(
                 path, device_map="cuda:0", dtype=torch.bfloat16, attn_implementation="sdpa")
         elif kind == "asr":
-            import types
-            fake = types.ModuleType("nagisa")
-            fake.tagging = lambda *a, **k: []
-            sys.modules.setdefault("nagisa", fake)
+            ensure_nagisa()
             from qwen_asr import Qwen3ASRModel
             self.obj = Qwen3ASRModel.from_pretrained(
                 CONFIG["models"]["asr"], dtype=torch.bfloat16, device_map="cuda:0",
                 max_inference_batch_size=1, max_new_tokens=512)
         elif kind == "aligner":
             # 强制对齐器：给"音频 + 文本"，回每个字/词的真实起止时间。
-            # 和 ASR 一样要 nagisa 假模块（qwen_asr 的顶层导入会连带它）。
-            import types
-            fake = types.ModuleType("nagisa")
-            fake.tagging = lambda *a, **k: []
-            sys.modules.setdefault("nagisa", fake)
+            # 和 ASR 一样要 nagisa 替身（qwen_asr 顶层导入会连带它）。
+            ensure_nagisa()
             from qwen_asr import Qwen3ForcedAligner
             path = CONFIG.get("models", {}).get("aligner")
             if not path:
@@ -1187,6 +1199,14 @@ def _align_items(text: str, a, sr: int, language: str = "zh"):
         breaks = sorted({i + 1 for i, ch in enumerate(text)
                          if ch == " " and 0 < i + 1 < len(text)})
         log("断行用空格，词边界 %d 个" % len(breaks))
+        items = _ms_items(items, dur, a, sr)
+        return items, breaks
+    if _lang == "ja":
+        # 日文没有空格，jieba 也帮不上忙。字幕断行放在助词/标点之后，
+        # 否则按字数硬切会切出「おはようございま / す。」这种半截词。
+        JA_BREAK_AFTER = set("はがをにでとものへやねよかな。、！？")
+        breaks = sorted({i + 1 for i, ch in enumerate(text[:-1]) if ch in JA_BREAK_AFTER})
+        log("断行用助词/标点，断点 %d 个" % len(breaks))
         items = _ms_items(items, dur, a, sr)
         return items, breaks
     try:
