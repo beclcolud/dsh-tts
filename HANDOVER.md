@@ -497,3 +497,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 <work>/dsh-tts
 | git | 干净、与 `origin/main` 同步、已打 v0.3.1 |
 
 本节只动 `resolveVoice` 的默认分支，**没碰拼接参数、没碰模型路线**；第九节其余条目状态不变。
+
+**文档产物**：`HANDOVER.docx` 已用 `scripts/md_to_docx.py`（DSH 自带 python）重新生成，和本文一致；
+`HANDOVER.pdf` **仍是 2026-11-17 的旧版**——本机 Word 自动化在非交互会话里报「Word 未能引发事件」，
+也没有 LibreOffice，需要在宿主上用 Word 手动另存一次。
