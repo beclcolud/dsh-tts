@@ -354,7 +354,7 @@ node scripts/install.mjs --uninstall
 
 ```bash
 # 1. 服务能起
-python server/tts_server.py server/config.06b.json &
+python server/tts_server.py server/<自己写一份配置>.json &
 curl -s http://127.0.0.1:17322/health     # 应返回 ok:true
 
 # 2. 十秒短句能出声（不需要 DSH）

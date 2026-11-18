@@ -23,6 +23,17 @@ jieba.cache
 *.cache
 torchinductor_*/
 
+# Python 构建产物（曾把 tts_server.cpython-313.pyc 提交进版本库）
+__pycache__/
+*.pyc
+*.pyo
+
+# 分发包（scripts/make-release.mjs 生成）
+dist/
+
+# 本机配置覆盖：分享前请确认没有把你的路径写进 cordis.patch.yml
+.dsh-tts/
+
 # 系统
 Thumbs.db
 desktop.ini

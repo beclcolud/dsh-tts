@@ -1116,7 +1116,7 @@ def mt_load():
     if MT["model"] is not None:
         return MT["tok"], MT["model"]
     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-    # 默认放在 work_dir 的上一级 models/ 下（本机就是 E:\<工作区>\models\...）
+    # 默认放在 work_dir 的上一级 models/ 下（即 <配音目录的上级>/models/nllb-...）
     default_mt = Path(CONFIG.get("work_dir") or ".").resolve().parent / "models" / "nllb-200-distilled-600M"
     path = CONFIG.get("mt_model") or str(default_mt)
     if not Path(path).exists():
