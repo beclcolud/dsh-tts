@@ -286,6 +286,10 @@
         }).join('') + '</select>'
       } else if (f.kind === 'json') {
         h += '<input type="text" data-k="' + f.key + '" data-kind="json" value="' + esc(JSON.stringify(v === undefined ? (f.key === 'blurWords' ? [] : {}) : v)) + '" style="max-width:46%">'
+      } else if (f.kind === 'paths') {
+        h += '<input type="text" data-k="' + f.key + '" data-kind="json" value="' + esc(JSON.stringify(v || {})) + '" style="max-width:60%">'
+      } else if (f.kind === 'path') {
+        h += '<input type="text" data-k="' + f.key + '" data-kind="path" value="' + esc(v == null ? '' : v) + '" style="max-width:60%">'
       } else if (f.kind === 'int' || f.kind === 'number') {
         h += '<input type="number" class="act" data-k="' + f.key + '" data-kind="' + f.kind + '" value="' + esc(v) + '" step="' + (f.kind === 'number' ? '0.05' : '1') + '" style="max-width:110px">'
       } else {

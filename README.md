@@ -95,6 +95,10 @@ defaultVoice: '新闻联播音色'
 
 可选项：`models.aligner`、`mtModel`、`language`（zh/en/ja）、停顿与音质参数——见 [使用手册 §8](使用手册.md)。
 
+> **机器相关路径不写在 `cordis.patch.yml` 里**。仓库里那份是空模板，真实路径放在本机覆盖文件（不进版本库），
+> 按优先级找：`<workDir>/.dsh-tts/settings.json` → `<当前目录>/配音/.dsh-tts/settings.json` → `~/.dsh-tts/settings.json`。
+> 面板「参数」页改的就是它。
+
 ### 2. 三个工具
 
 ```js

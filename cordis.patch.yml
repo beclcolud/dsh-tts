@@ -1,48 +1,35 @@
 # dsh-tts 的 bundle 补丁层：只把 host 行插进来，不改 profile 的 package.json。
 # 可调项都在这里；升级插件不会覆盖这一层。
+#
+# 机器相关的路径（pythonPath / libs / models / mtModel / workDir / logFile）刻意留空：
+# 真实值放本机覆盖文件，不进版本库。脚本能读到的位置（按优先级）：
+#   <workDir>/.dsh-tts/settings.json
+#   <当前目录>/配音/.dsh-tts/settings.json
+#   ~/.dsh-tts/settings.json
+# 面板「参数」页改的就是这个文件，也可以手写。
 - insert:
     - id: dsh-tts
       name: 'dsh-tts'
       config:
         port: 17321
-        # 本机跑在 ComfyUI 便携包的 Python 里（已装好 qwen-tts / qwen-asr / audio-separator）
-        pythonPath: 'E:\<工作区>\ComfyUI\ComfyUI_windows_portable\python_embeded\python.exe'
-        libs: 'E:\<工作区>\_tts_probe\pylibs'
-        models:
-          custom: 'E:\<工作区>\models\Qwen3-TTS-0.6B-CustomVoice'
-          design: 'E:\<工作区>\models\Qwen3-TTS-1.7B-VoiceDesign'
-          base: 'E:\<工作区>\models\Qwen3-TTS-0.6B-Base'
-          asr: 'E:\<工作区>\models\Qwen3-ASR-0.6B'
-          # 强制对齐器（约 1.2G）。配了它才能用 voiceover({align:true}) 重排字幕；
-          # 不配就只用逐句字幕（句级时间本来就是精确的，只是长句不拆行）。
-          aligner: 'E:\<工作区>\models\Qwen3-ForcedAligner-0.6B'
-        # 输出根目录；留空则落在当前会话工作区的 配音/ 下
-        workDir: 'E:\<工作区>\配音'
-        # 默认合成语言：zh / en / ja
+        pythonPath: ""
+        libs: ""
+        models: {}
+        workDir: ""
+        mtModel: ""
+        logFile: ""
         language: 'zh'
-        # 翻译模型（NLLB-200-distilled-600M）。留空则按 workDir 的上一级 models/ 找。
-        mtModel: 'E:\<工作区>\models\nllb-200-distilled-600M'
         defaultVoice: '新闻联播音色'
         idleShutdownMs: 300000
-        # —— 发音微调（都是实测调出来的，改动前先听）——
-        # 咬字清晰指令：解决字与字粘连，默认开
         diction: true
-        # 易粘连词的断开方式：punct=插标点（默认，稳），split=拆字拼接（断点精确但对元音衔接不友好）
         blur_mode: 'punct'
         blur_sep: '、'
         blur_words: ['答案', '牛奶']
-        # 拆字模式下的断点毫秒（blur_mode=split 时才用）
         blur_gap_ms: 80
-        # —— 句间停顿（接缝）——
-        # target = 按句末标点把停顿规整到下面这些毫秒值；current = 只保留 25ms 边距，看模型给多少。
-        # 只有句末标点会成为接缝（split_sentences 只按 。！？； 和换行切句）。
-        # 注意：改这里要重启配音服务才生效（服务启动时读一次）。只调一次的话用工具参数 seamPauses。
-        # 忙的时候最多等多久（毫秒）。0 = 立即失败并说明谁在跑；调大则排队。
         busyWaitMs: 0
         seamPolicy: 'target'
         seamPauses:
-          '。': 180      # 新闻播报 220~260；解说 180；口语化 140~160
+          '。': 180
           '！': 200
           '？': 200
           '；': 140
-        logFile: 'E:\<工作区>\配音\service.log'
