@@ -765,7 +765,11 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         targets.update({str(k): float(v) for k, v in CONFIG["seam_target_ms"].items()})
     if isinstance(seam_targets, dict):
         targets.update({str(k): float(v) for k, v in seam_targets.items()})
-    for sentence in split_sentences(text):
+    _sentences = split_sentences(text)
+    # 真实进度：UI 要显示"已完成第几句"，这个只有逐句循环里才有。
+    # 生命周期跟着请求走——do_POST 的 finally 里会连同 busy 一起清掉。
+    STATE["progress"] = {"done": 0, "total": len(_sentences), "unit": "sentence"}
+    for _idx, sentence in enumerate(_sentences, 1):
         # 长文本渲染可能要几分钟，逐句检查取消标记；等到整段跑完再响应就失去意义了
         if _take_cancel():
             raise Cancelled("渲染已取消（用户点了取消）")
@@ -793,6 +797,7 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         pieces.append(a)
         bounds.append((cursor, cursor + dur, sentence))
         cursor += dur + gap
+        STATE["progress"] = {"done": _idx, "total": len(_sentences), "unit": "sentence"}
     keep_ms = float(CONFIG.get("edge_keep_ms", 25))
     overlap_ms = float(CONFIG.get("overlap_ms", 10))
     trigger_ms = float(CONFIG.get("overlap_trigger_ms", 120))
@@ -1120,6 +1125,7 @@ def handle(req: str, body: dict) -> dict:
                 # 会永远报 busy。以"当前记录的请求"为准，GET/POST 都准。
                 "busy": bool(STATE.get("busy_req")),
                 "busy_req": STATE.get("busy_req"),
+                "progress": STATE.get("progress") if STATE.get("busy_req") else None,
                 "busy_s": round(time.time() - busy_since, 1) if busy_since else None}
     if req == "shutdown":
         threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
@@ -1275,6 +1281,54 @@ def handle(req: str, body: dict) -> dict:
     if req == "bank_add":
         return {"entry": bank_add(body["entry"])}
 
+    if req == "outputs":
+        # 给 UI 用的产物列表：扫 work_dir 两层，按修改时间倒序。
+        # 只读文件名/大小/时间，不返回文件内容。
+        limit = max(1, min(200, int(body.get("limit") or 40)))
+        root = out_dir()
+        exts = {".mp3", ".wav", ".m4a", ".flac", ".mp4", ".srt"}
+        items = []
+        if root.exists():
+            for p in list(root.glob("*")) + list(root.glob("*/*")):
+                if not p.is_file() or p.suffix.lower() not in exts:
+                    continue
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                items.append({"name": p.name, "path": str(p),
+                              "rel": str(p.relative_to(root)).replace("\\", "/"),
+                              "dir": p.parent.name if p.parent != root else "",
+                              "ext": p.suffix.lower(),
+                              "bytes": st.st_size, "mtime": int(st.st_mtime)})
+        items.sort(key=lambda x: x["mtime"], reverse=True)
+        return {"files": items[:limit], "total": len(items), "root": str(root)}
+
+    if req == "bank_rename":
+        old, new = str(body["name"]), str(body.get("to") or "").strip()
+        if not new:
+            raise ValueError("新名字不能为空")
+        data = bank_load()
+        if old not in data:
+            raise ValueError("音色库里没有：" + old)
+        if new in data and new != old:
+            raise ValueError("已经有同名音色：" + new)
+        entry = data.pop(old)
+        entry["name"] = new
+        data[new] = entry
+        bank_save(data)
+        return {"entry": entry, "renamed": [old, new]}
+
+    if req == "bank_delete":
+        name = str(body["name"])
+        data = bank_load()
+        if name not in data:
+            raise ValueError("音色库里没有：" + name)
+        entry = data.pop(name)
+        bank_save(data)
+        # 只删记录，不动 ref_audio：那个文件可能被别的条目共用
+        return {"deleted": name, "entry": entry, "left": len(data)}
+
     raise ValueError("unknown request: " + req)
 
 
@@ -1323,6 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 STATE["busy_req"] = None
                 STATE["busy_since"] = None
+                STATE["progress"] = None
             self._send(200, {"ok": True, **result})
         except Cancelled as e:
             log("WARN", str(e))
