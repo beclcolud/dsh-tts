@@ -101,8 +101,12 @@ def main() -> int:
     ap.add_argument("--bank-dir", default=str(ROOT.parent / "配音" / "voicebank"))
     ap.add_argument("--voice", default="新闻联播音色")
     ap.add_argument("--pauses", default='{"。": 260, "；": 160}')
-    ap.add_argument("--peak-ceilings", default="0.95,0.70",
+    ap.add_argument("--peak-ceilings", default="0.95",
                     help="逗号分隔的峰值上限，逐个渲染同一段做对比")
+    ap.add_argument("--limits", default="off",
+                    help="逗号分隔的软限幅开关，逐个渲染做对比")
+    ap.add_argument("--tones", default="0,-3,-5",
+                    help="逗号分隔的高频层降 dB（负数=压高频），逐个渲染做对比")
     ap.add_argument("--export-dir", default=str(ROOT.parent / "配音" / "_diag"))
     args = ap.parse_args()
 
@@ -166,21 +170,33 @@ def main() -> int:
 
         export = Path(args.export_dir)
         export.mkdir(parents=True, exist_ok=True)
-        for k, ceil in enumerate([c.strip() for c in args.peak_ceilings.split(",") if c.strip()]):
-            label = "cell%s" % ceil
-            print("[3.%d] 成品（seam=target + 供体填充，峰值上限 %s）" % (k + 1, ceil))
-            r3 = call("say", text=TEXT, kind=kind, voice=voice, stem="d3-" + ceil.replace(".", ""),
+        combos = []
+        for c in [x.strip() for x in args.peak_ceilings.split(",") if x.strip()]:
+            combos.append(("峰值上限" + c, {"peak_ceiling": float(c)}, "峰值上限" + c.replace(".", "")))
+        for lim in [x.strip() for x in args.limits.split(",") if x.strip()]:
+            combos.append(("软限幅" + ("开" if lim == "on" else "关"),
+                           {"peak_ceiling": 0.95, "soft_limit": lim == "on"},
+                           "软限幅" + ("开" if lim == "on" else "关")))
+        for tone in [x.strip() for x in args.tones.split(",") if x.strip()]:
+            combos.append(("高频层降" + tone + "dB",
+                           {"peak_ceiling": 0.95, "tone_tame_db": float(tone)},
+                           "高频层降" + tone.replace("-", "负").replace(".", "") + "dB"))
+        for k, (title, extra, fname) in enumerate(combos):
+            ceil = extra.get("peak_ceiling")
+            label = "combo%d" % k
+            print("[3.%d] 成品（%s）" % (k + 1, title))
+            r3 = call("say", text=TEXT, kind=kind, voice=voice, stem="d3-%d" % k,
                       out_dir=str(work), seam="target", seam_target_ms=json.loads(args.pauses),
-                      peak_ceiling=float(ceil))
+                      **extra)
             b3 = json.loads(Path(r3["bounds"]).read_text(encoding="utf-8"))
             seam_ms3 = [s["start"] * 1000.0 / b3["sr"] for s in b3["sentences"][1:]]
-            stat = analyse("ceil=" + ceil, Path(r3["wav"]), seam_ms3)
+            stat = analyse(title, Path(r3["wav"]), seam_ms3)
             results[label] = stat
             if k == 0:
                 results["donor"] = stat
             seams = json.loads(Path(r3["seams"]).read_text(encoding="utf-8"))["seams"]
             print("           接缝填充方式: %s" % [s.get("fill") for s in seams])
-            base = "峰值上限%s" % ceil.replace(".", "")
+            base = fname
             subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", r3["wav"], "-c:a", "libmp3lame",
                             "-b:a", "192k", str(export / (base + ".mp3"))], check=False)
             print("           导出: %s" % (export / (base + ".mp3")))

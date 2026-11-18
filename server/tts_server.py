@@ -585,6 +585,71 @@ def join_with_overlap(left, right, sr, overlap_ms: float, trigger_ms: float):
 
 
 
+def high_shelf(a, sr, freq: float | None = None, gain_db: float | None = None):
+    """在 freq 以上做一个平滑的高频层降（正数是提、负数是降）。
+
+    为什么要它：模型自带的硬瞬态能量高度集中在中高频（实测单处跳变 96% 能量在 2kHz 以上），
+    这类"刺"是**频谱**问题，靠限幅只按比例压电平，陡峭度不变，治不了。
+    用 FFT 做频域整形，过渡带用平滑台阶，避免在截止点产生新的振铃。
+    """
+    import numpy as np
+    hz = float(freq if freq is not None else CONFIG.get("tone_tame_hz", 6000.0))
+    db = float(gain_db if gain_db is not None else CONFIG.get("tone_tame_db", 0.0))
+    if len(a) == 0 or abs(db) < 0.05 or hz <= 0:
+        return a
+    n = len(a)
+    spec = np.fft.rfft(a)
+    f = np.fft.rfftfreq(n, 1.0 / sr)
+    ramp = 1.0 / (1.0 + np.exp(-(f - hz) / max(1.0, hz * 0.15)))   # 0→1 的平滑台阶
+    g = float(10 ** (db / 20.0))
+    spec = spec * (1.0 + (g - 1.0) * ramp)
+    return np.fft.irfft(spec, n).astype(np.float32)
+
+
+def soft_limit(a, sr, threshold: float | None = None, release_ms: float | None = None):
+    """峰值软限幅：只把超过阈值的尖峰压下去，整体响度不动。
+
+    为什么不直接降归一化天花板：天花板是整体等比缩放，瞬态和峰值一起变小，
+    "刺"的比例一点没变，只是变小声了。这里改的是**动态**——
+    下降立即生效（保护峰值不被削），恢复用一阶平滑（避免像抽气一样的颤动）。
+    只压超过阈值的部分，所以中低电平的语音完全不受影响。
+    """
+    import numpy as np
+    if len(a) == 0:
+        return a
+    thr = float(threshold if threshold is not None else CONFIG.get("limit_threshold", 0.85))
+    rel_ms = float(release_ms if release_ms is not None else CONFIG.get("limit_release_ms", 60.0))
+    if thr <= 0 or float(np.max(np.abs(a))) <= thr:
+        return a
+
+    hop = max(1, int(0.005 * sr))            # 5ms 一格
+    env = np.abs(a)
+    nblk = len(env) // hop
+    if nblk == 0:
+        return a
+    blk = env[:nblk * hop].reshape(nblk, hop).max(axis=1)
+
+    # 前瞻 3 格（约 10ms），保证尖峰到达前增益已经开始下降
+    look = max(1, int(0.010 / 0.005))
+    bmax = blk.copy()
+    for shift in range(1, look):
+        bmax[:-shift] = np.maximum(bmax[:-shift], blk[shift:])
+
+    target = np.minimum(1.0, thr / np.maximum(bmax, 1e-9))
+    rel_coef = float(np.exp(-hop / max(1.0, rel_ms / 1000.0 * sr)))
+    gain = np.ones(nblk, dtype=np.float32)
+    cur = 1.0
+    for i in range(nblk):
+        t = float(target[i])
+        cur = t if t < cur else (t + (cur - t) * rel_coef)   # 降：立即；升：慢
+        gain[i] = cur
+
+    g_full = np.repeat(gain, hop)
+    if len(g_full) < len(a):
+        g_full = np.concatenate([g_full, np.full(len(a) - len(g_full), g_full[-1], dtype=np.float32)])
+    return a * g_full[:len(a)]
+
+
 def normalize_output(a, sr, target_rms_db: float = -20.0, peak_ceiling: float | None = None):
     """Bring every render to a comparable loudness.
 
@@ -644,7 +709,8 @@ SEAM_TARGET_FALLBACK = 160
 def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1,
                     do_trim: bool = True, seam: str | None = None, report: dict | None = None,
                     seam_targets: dict | None = None, pad_fill: str = "donor",
-                    peak_ceiling: float | None = None):
+                    peak_ceiling: float | None = None, soft_limit_flag: bool | None = None,
+                    tone_tame_db: float | None = None):
     """Synthesize sentence by sentence so the subtitle timeline is exact.
 
     seam="current"：原策略，保留 25ms 边距，只有空隙 >120ms 才做 10ms 交叉淡化。
@@ -657,6 +723,9 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     cursor = 0.0
     sr = 24000
     gap_ms = float(CONFIG.get("blur_gap_ms", 80))
+    if soft_limit_flag is None:
+        # 默认关：实测它只按比例压电平，对"刺"没有实质改善（见 scripts/diagnose_clicks.py）
+        soft_limit_flag = bool(CONFIG.get("soft_limit", False))
     policy = seam or CONFIG.get("seam_policy") or "target"
     # 三层覆盖：请求参数 > 配置文件 > 内置默认
     targets = dict(SEAM_TARGET_MS)
@@ -733,6 +802,10 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         report["policy"] = policy
         report["seams"] = seams
     audio = normalize_output(audio, sr, peak_ceiling=peak_ceiling)
+    # 频谱整形在前、限幅在后：先把刺的那一段能量压下去，再决定要不要削峰。
+    audio = high_shelf(audio, sr, gain_db=tone_tame_db)
+    if soft_limit_flag:
+        audio = soft_limit(audio, sr)
     total = len(audio) / sr
     bounds = [(starts[i], starts[i + 1] if i + 1 < len(starts) else total, t) for i, (_a, _b, t) in enumerate(bounds)]
     return audio, int(sr), bounds
@@ -971,6 +1044,8 @@ def handle(req: str, body: dict) -> dict:
                                            seam=body.get("seam"), report=seam_report,
                                            seam_targets=body.get("seam_target_ms"),
                                            peak_ceiling=body.get("peak_ceiling"),
+                                           soft_limit_flag=body.get("soft_limit"),
+                                           tone_tame_db=body.get("tone_tame_db"),
                                            pad_fill=body.get("seam_fill")
                                            or ("zero" if body.get("seam_noise") is False else "donor"))
         stem = body.get("stem") or ("tts-%d" % int(time.time()))
