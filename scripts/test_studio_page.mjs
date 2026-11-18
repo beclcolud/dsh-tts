@@ -1,10 +1,9 @@
 /**
  * 工作台页面自检：把服务端返回的 HTML 里的脚本抽出来
  *   ① 语法检查（new Function 只解析不执行）
- *   ② 用假 DOM 跑一遍，断言 "正在连接服务…" 会被渲染函数替换掉
- *
- * 这两条对应用户真实遇到的问题：脚本里一个被模板字符串吃掉的反斜杠，
- * 让整个脚本语法错误，页面就永远停在初始文案上。
+ *   ② 用假 DOM 跑一遍：初始文案要被替换掉（对应"卡在正在连接服务…"）
+ *   ③ 旧插件（status 没有 apiVersion）要提示重启，而不是让人看到 HTTP 404
+ *   ④ 接口 404 时要给人话
  *
  * 运行：node scripts/test_studio_page.mjs
  */
@@ -20,7 +19,6 @@ const ok = (c, label, extra) => {
   else { fail += 1; console.log('  FAIL ' + label + (extra === undefined ? '' : ' -> ' + String(JSON.stringify(extra)).slice(0, 220))) }
 }
 
-// ---- 从插件取页面 ----
 const mod = await import(pathToFileURL(path.join(ROOT, 'lib', 'index.js')).href)
 const routes = {}
 const ctx = {
@@ -44,59 +42,61 @@ const m = html.match(/<script>([\s\S]*?)<\/script>/)
 ok(!!m, '找到内联脚本')
 const src = m ? m[1] : ''
 
-// ---- ① 语法 ----
 console.log('[1] 脚本语法')
 let syntaxError = ''
 try { new Function(src) } catch (e) { syntaxError = String(e && e.message ? e.message : e) }
 ok(syntaxError === '', '脚本能通过解析', syntaxError)
 
-// ---- ② 假 DOM 跑一遍 ----
-console.log('[2] 冒烟运行')
 function makeEl(id) {
   return {
-    id, textContent: '', innerHTML: '', style: {}, checked: false, value: '',
+    id, textContent: '', innerHTML: '', style: {}, checked: false, value: '', disabled: false,
     classList: { add() {}, remove() {} },
     setAttribute() {}, getAttribute() { return '' }, addEventListener() {},
-    appendChild() {}, onclick: null,
+    appendChild() {}, onclick: null, oninput: null, closest() { return null },
   }
 }
-const els = {}
-for (const id of ['sub', 'err', 'view', 'savecfg', 'cancel', 'refresh', 'newvoice', 'create', 'back']) els[id] = makeEl(id)
-
-const document = {
-  getElementById: (id) => els[id] || (els[id] = makeEl(id)),
-  querySelectorAll: () => [],
-  addEventListener: () => {},
-  body: { style: {} },
-  createElement: () => makeEl('x'),
-}
-const calls = []
-const fetchStub = (url) => {
-  calls.push(String(url))
-  const body = String(url).indexOf('status.json') >= 0
-    ? { ok: true, online: false, loaded: null, idleS: 1, idleShutdownMs: 300000, busyReq: null, busyS: null, progress: null }
-    : { ok: true, files: [], entries: {}, fields: [], values: {}, readonly: [] }
-  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
-}
-const windowStub = { location: { origin: 'http://127.0.0.1:1', href: '' }, open: () => null, alert: () => {}, close() {}, opener: null, self: {}, top: {} }
-const navigatorStub = { clipboard: { writeText: () => Promise.resolve() } }
-const AudioStub = function () { return { play: () => Promise.resolve() } }
-
-let runtimeError = ''
-try {
+async function runPage(opts) {
+  const els = {}
+  for (const id of ['sub', 'err', 'compat', 'view', 'savecfg', 'cancel', 'refresh', 'newvoice', 'create', 'back']) els[id] = makeEl(id)
+  const document = {
+    getElementById: (id) => els[id] || (els[id] = makeEl(id)),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    activeElement: null,
+    body: { style: {} },
+  }
+  const fetchStub = (url) => {
+    const u = String(url)
+    if (u.indexOf('status.json') >= 0) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(opts.status) })
+    }
+    if (u.indexOf('queue.json') >= 0 && opts.queue404) {
+      return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) })
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(opts.other || { ok: true }) })
+  }
+  const windowStub = { location: { origin: 'http://x', href: '' }, open: () => null, alert: () => {}, close() {}, opener: null, self: {}, top: {} }
   const run = new Function('window', 'document', 'fetch', 'setInterval', 'setTimeout', 'Audio', 'navigator', src)
-  run(windowStub, document, fetchStub, () => 0, (fn) => { try { fn() } catch { /* ignore */ } }, AudioStub, navigatorStub)
+  run(windowStub, document, fetchStub, () => 0, (fn) => { try { fn() } catch { /* ignore */ } },
+    function () { return { play: () => Promise.resolve() } }, { clipboard: { writeText: () => Promise.resolve() } })
   await new Promise((r) => setTimeout(r, 80))
-} catch (e) {
-  runtimeError = String(e && e.message ? e.message : e)
+  return els
 }
-ok(runtimeError === '', '脚本启动不报错', runtimeError)
-ok(calls.some((u) => /status\.json/.test(u)), '启动时请求了状态接口', calls.slice(0, 3))
 
-const subText = els.sub.textContent
-console.log('   #sub 最终文案: ' + JSON.stringify(subText))
-ok(subText !== '' && subText.indexOf('正在连接服务') < 0, '「正在连接服务…」被替换掉了（不再卡死）', subText)
-ok(els.view.innerHTML.length > 0, '视图区渲染出了内容', els.view.innerHTML.length)
+console.log('[2] 正常运行（新插件）')
+const a = await runPage({ status: { ok: true, online: false, loaded: null, idleS: 1, idleShutdownMs: 300000, apiVersion: 2, busyReq: null, busyS: null, progress: null } })
+ok(a.sub.textContent !== '' && a.sub.textContent.indexOf('正在连接服务') < 0, '初始文案被替换', a.sub.textContent)
+ok(a.view.innerHTML.length > 0, '视图区有内容')
+ok((a.compat.innerHTML || '') === '', '新版插件不显示兼容提示', a.compat.innerHTML)
+
+console.log('[3] 旧插件（没有 apiVersion）')
+const b = await runPage({ status: { ok: true, online: false, idleS: 1, idleShutdownMs: 300000 } })
+ok((b.compat.innerHTML || '').indexOf('重启 DSH') > 0, '提示需要重启 DSH', b.compat.innerHTML)
+
+console.log('[4] 接口 404 要说人话')
+const c = await runPage({ status: { ok: true, online: false, apiVersion: 2, idleShutdownMs: 300000 }, queue404: true })
+const shown = String(c.compat.innerHTML || '') + String(c.err.innerHTML || '')
+ok(shown.indexOf('重启 DSH') > 0, '404 提示里点明要重启', shown)
 
 console.log('')
 console.log(fail === 0 ? '全部通过' : fail + ' 项失败')
