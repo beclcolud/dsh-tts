@@ -92,6 +92,32 @@ ok(bound[1].end === 1200, 'bind 输出保持毫秒', bound[1].end)
 const cued = S.groupAlignedCues(bound, { maxChars: 40 })
 ok(Math.abs(cued[0].end - 1.2) < 1e-6, 'group 输出是秒（1200ms → 1.2s）', cued[0].end)
 
+console.log('[8] 只在允许的位置断行（避免切在词中间）')
+// "清早的菜市场是最热闹的地方"：假设 token 边界在 4（菜|市场）、6、8、10
+const items8 = S.bindAlignedText(
+  Array.from({ length: 13 }, (_, i) => ({ text: '清早的菜市场是最热闹的地方'[i], start: i * 100, end: i * 100 + 100 })),
+  '清早的菜市场是最热闹的地方',
+)
+ok(items8.length === 13, 'bind 后每字一项，索引与原文对齐', items8.length)
+const noBreak = S.groupAlignedCues(items8, { maxChars: 10 })
+const withBreak = S.groupAlignedCues(items8, { maxChars: 10, breakable: [1, 2, 3, 4, 6, 8, 10, 13] })
+ok(withBreak.length >= 2, '给了断点后仍会拆行', withBreak.length)
+ok(withBreak.every((c) => [0, 1, 2, 3, 4, 6, 8, 10, 13].includes(
+  withBreak.slice(0, withBreak.indexOf(c) + 1).reduce((n, x) => n + x.text.length, 0))),
+  '每条结尾都落在允许的断点上', withBreak.map((c) => c.text))
+const hard = S.groupAlignedCues(items8, { maxChars: 5, breakable: [13] })
+ok(hard.some((c) => c.text.length > 5), '找不到断点时会硬切（有 hardSlack 兜底）', hard.map((c) => c.text.length))
+ok(noBreak.map((c) => c.text).join('') === '清早的菜市场是最热闹的地方', '不丢字')
+
+console.log('[9] 标点不单独成条')
+const p = S.bindAlignedText([
+  { text: '甲', start: 0, end: 100 }, { text: '乙', start: 100, end: 200 },
+  { text: '丙', start: 300, end: 400 },
+], '甲乙，丙')
+const pc = S.groupAlignedCues(p, { maxChars: 2, breakable: [2] })
+ok(!pc.some((c) => /^[，。！？；：、]$/u.test(c.text)), '没有只有标点的字幕', pc.map((c) => c.text))
+ok(pc.map((c) => c.text).join('') === '甲乙，丙', '内容不丢', pc.map((c) => c.text))
+
 console.log('')
 console.log(fail === 0 ? '全部通过' : fail + ' 项失败')
 process.exit(fail === 0 ? 0 : 1)

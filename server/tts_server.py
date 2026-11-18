@@ -1180,7 +1180,22 @@ def handle(req: str, body: dict) -> dict:
             for r in items:          # 落在秒域，换算成毫秒
                 r["start"] *= 1000.0
                 r["end"] *= 1000.0
-        return {"items": items, "count": len(items), "unit": "ms", "dur": round(dur, 3)}
+
+        # 顺带给出"可以在哪里断行"：用模型自己的 tokenizer 取 token 结束位置。
+        # 对齐器对中文是逐字吐的（tokenize_chinese_mixed），本身没有词信息；
+        # BPE token 虽然不等于词，但它的边界不会切在词中间（市场/热闹/地方 都是一个 token），
+        # 拿来当"允许断点"足够用，而且不引入任何新依赖。
+        breaks = []
+        try:
+            tk = model.processor.tokenizer
+            enc = tk(text, return_offsets_mapping=True, add_special_tokens=False)
+            ends = {int(e) for (_s, e) in enc["offset_mapping"] if 0 < int(e) < len(text)}
+            breaks = sorted(ends)
+        except Exception as exc:
+            log("WARN 取 token 断点失败（不影响对齐）：%r" % exc)
+
+        return {"items": items, "count": len(items), "unit": "ms", "dur": round(dur, 3),
+                "breaks": breaks}
 
     if req == "asr":
         model = MODELS.get("asr")
