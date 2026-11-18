@@ -181,7 +181,7 @@ node scripts/install.mjs --uninstall
 或双击 `一键安装.cmd`。原理：备份 profile → 改 `dependencies` + `dsh.profile.bundles` → 在 profile 的 `node_modules` 下建 `mklink /J` 软链 → 尝试 import 验证 → 失败回滚。
 
 **`node` 不在 PATH**，脚本里硬编码了运行时路径：
-`C:\Users\honor\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`
+`%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`
 
 ---
 
