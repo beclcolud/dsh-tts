@@ -1066,6 +1066,14 @@ def _align_items(text: str, a, sr: int):
         import logging
         import jieba
         jieba.setLogLevel(logging.ERROR)
+        # 词典缓存固定到工作目录。默认位置在 TEMP 不可用时会落到**当前目录**，
+        # 曾经因此把一个 9MB 的 jieba.cache 写进仓库根并被提交。
+        try:
+            cache_dir = out_dir() / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            jieba.dt.cache_file = str(cache_dir / "jieba.cache")
+        except Exception:
+            pass
         breaks = sorted({int(e) for (_w, _s, e) in jieba.tokenize(text) if 0 < int(e) < len(text)})
         log("断行用 jieba，词边界 %d 个" % len(breaks))
     except Exception as exc:
