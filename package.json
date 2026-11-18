@@ -1,6 +1,6 @@
 {
   "name": "dsh-tts",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "文案配音：本地 Qwen3-TTS 出声，自动逐句字幕与成片；支持按 PR 时间轴分段配音、句子级重录克隆音色。",
   "meta": {
     "title": "配音 TTS",

@@ -254,10 +254,11 @@ node scripts/install.mjs --uninstall
 
 ### D. 时间轴工具只支持一种输入格式
 
-- 只吃 PR 导出的 FCP XML（xmeml）。达芬奇、FCP 原生、剪映、EDL 均未支持（工具描述里已写明"先只做 PR XML"）。
-- 假定序列起点为 0（未读 `<timecode>`）——真实项目恰好从 0 开始，**换项目要注意**。
-- 标记名只取数字，`03v/` 的后缀不参与判断；标记后缀与文案后缀冲突时**无告警**。
-- 只出 SRT，不出 ASS/TTML，也不写回 PR；不生成 `.prproj`。
+- **格式（部分改善，2026-11-18）**：仍然只**解析** PR 的 FCP 7 XML（xmeml），达芬奇 / FCP X 原生 / EDL 都不支持。但现在**不会静默解析出空结果**——会先认格式再报错：FCPXML 提示"在 PR 里导出 Final Cut Pro XML / 达芬奇导出 FCP 7 XML"，EDL 与"不是 XML"各有专门提示。
+- **时码（已读）**：现在会读 `<timecode>` 的 frame/string，在预检里提示"起始时码非 0，工具按序列相对时间处理，若标记按绝对时码填会整体偏移"。**不做自动补偿**——无法可靠判断导出的是相对还是绝对帧，猜错比不猜更糟。
+- **标记超界（已告警）**：标记结束时间超出序列时长时会提示，这通常是按时码填写的症状。
+- **后缀冲突（已告警）**：标记名自带 S/V（PR 里常见 `03v/`、`07s/`）且推导出的模式与文案不一致时会提示"以文案为准"。两边一致时不报警，避免噪音。
+- **仍未支持**：解析达芬奇/FCP X 原生 XML、EDL、ASS/TTML 输出、写回 PR 或生成 `.prproj`。
 
 ### E. 字幕时间仍是估算
 
@@ -395,6 +396,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 反听字幕接线 | `lib/index.js` + `lib/plan.js` + `lib/clips.js` + `server/tts_server.py` | `04S/` + 正文留空 = 反听：按标记区间切原片音频 → ASR 转写 → 强制对齐 → 字级字幕，自动并入全片 SRT（按入点偏移）。对齐不可用时退回按字数分配。`plan` 阶段把它标成"字幕（反听）"并跳过时长估算 |
 | picks.json 换键 | `lib/picks.js`（新）+ `lib/index.js` | 键从"句序"改成"句序@文本hash@音色标签"，带历史与 current 指针；旧文件自动迁移。出多版时会提示"这句在这个音色下上次选的是第几版"。测试：`test_picks.mjs`（20 项） |
 | 并发与生命周期 | `lib/guard.js`（新）+ `lib/index.js` + `server/tts_server.py` | 工具级互斥（忙则快速失败、可配等待）、`/health` 暴露 busy、修掉并发 spawn 竞态、启动即退出改为当场报错。测试：`test_guard.mjs`（13 项）+ 真实并发实测 |
+| 时间轴格式 | `lib/timeline.js` + `lib/plan.js` | 非目标格式给出可照做的报错（FCPXML/EDL/非 XML 分别提示）；读 `<timecode>` 并在预检提示偏移风险；标记超出序列时长、标记后缀与文案模式冲突都会告警。测试：`test_timeline_formats.mjs`（20 项） |
 | 跨平台收敛 | `lib/platform.js`（新）+ `scripts/install.mjs` + `一键安装.sh` | 安装按平台选 junction / 符号链接（并修掉卸载时 POSIX 会删到目标目录的坑）、ffmpeg concat 路径按平台转义、编码固定注入。平台分支有单测（`test_platform.mjs` 12 项），但 Linux 实际运行仍未验证 |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
