@@ -17,7 +17,7 @@
 DSH 宿主进程
   └─ dsh-tts 插件 (lib/index.js)
        ├─ 首次调用拉起 server/tts_server.py（常驻，空闲自动退）
-       ├─ 状态端点 /api/dsh-tts/status.json（客户端小圆点轮询）
+       ├─ 状态端点 /api/dsh-tts/status.json（小圆点轮询）+ 取消端点 POST /api/dsh-tts/cancel.json
        ├─ 解析层：lib/xml.js（手写 XML）、timeline.js、script.js、plan.js
        └─ 音色库：<workDir>/voicebank/index.json
   server/tts_server.py
@@ -224,7 +224,7 @@ Linux / ROCm 的代码路径写好了、分支有单测，尚未真正执行过�
 
 ```
 dsh-tts/
-├── lib/            index.js（工具）· client.js（卡片+状态点）
+├── lib/            index.js（工具）· client.js（卡片 + 状态点：合成中显示秒数与取消）
 │                   xml.js · timeline.js · script.js · plan.js · audio.js
 ├── server/         tts_server.py · *.json（配置样例）
 ├── scripts/        install.mjs · selftest.mjs · test_*.mjs · fixtures/

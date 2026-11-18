@@ -49,7 +49,23 @@ _bootstrap_tmp()
 CONFIG: dict = {}
 LOCK = threading.Lock()
 STATE: dict = {"last_activity": time.time(), "loaded": None, "started": time.time(),
-                  "busy_req": None, "busy_since": None}
+                  "busy_req": None, "busy_since": None, "cancel_at": None}
+
+
+class Cancelled(Exception):
+    """用户在渲染途中点了取消。"""
+
+
+def _take_cancel() -> bool:
+    """取走取消标记。
+
+    单进程一次只跑一个请求（LOCK），所以标记一被取走就清掉，
+    不会误伤下一个请求。
+    """
+    if STATE.get("cancel_at"):
+        STATE["cancel_at"] = None
+        return True
+    return False
 
 
 def log(*parts):
@@ -750,6 +766,9 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     if isinstance(seam_targets, dict):
         targets.update({str(k): float(v) for k, v in seam_targets.items()})
     for sentence in split_sentences(text):
+        # 长文本渲染可能要几分钟，逐句检查取消标记；等到整段跑完再响应就失去意义了
+        if _take_cancel():
+            raise Cancelled("渲染已取消（用户点了取消）")
         parts = []
         pieces_of_sentence = split_for_blur(sentence) if CONFIG.get("blur_mode") == "split" else [sentence]
         for piece in pieces_of_sentence:
@@ -1096,8 +1115,10 @@ def handle(req: str, body: dict) -> dict:
                 "uptime_s": round(time.time() - STATE["started"], 1),
                 "idle_s": round(idle, 1),
                 "idle_shutdown_ms": CONFIG.get("idle_shutdown_ms", 300000),
-                # 忙不忙要让外面看得见：原来第二个请求只会静默排队
-                "busy": LOCK.locked(),
+                # 忙不忙要让外面看得见：原来第二个请求只会静默排队。
+                # 不能用 LOCK.locked() 判断：用 POST 调 health 时它自己正持着锁，
+                # 会永远报 busy。以"当前记录的请求"为准，GET/POST 都准。
+                "busy": bool(STATE.get("busy_req")),
                 "busy_req": STATE.get("busy_req"),
                 "busy_s": round(time.time() - busy_since, 1) if busy_since else None}
     if req == "shutdown":
@@ -1282,6 +1303,18 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
             req = body.pop("req", "")
+            # cancel 必须**不排队**：否则它会排在正在跑的长任务后面，
+            # 等轮到它时任务早就结束了。所以这里在取 LOCK 之前处理。
+            if req == "cancel":
+                # 只有真的有请求在跑时才置标记：否则标记会一直挂着，
+                # 把**下一个**请求误杀掉（那次请求还没开始就被取消了）。
+                running = bool(STATE.get("busy_req")) or LOCK.locked()
+                log("cancel 请求", "running=", running, "req=", STATE.get("busy_req"))
+                if running:
+                    STATE["cancel_at"] = time.time()
+                self._send(200, {"ok": True, "cancelled": running, "busy": running,
+                                 "busy_req": STATE.get("busy_req") if running else None})
+                return
             STATE["busy_req"] = req
             STATE["busy_since"] = time.time()
             try:
@@ -1291,6 +1324,9 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["busy_req"] = None
                 STATE["busy_since"] = None
             self._send(200, {"ok": True, **result})
+        except Cancelled as e:
+            log("WARN", str(e))
+            self._send(409, {"ok": False, "error": str(e), "cancelled": True})
         except ValueError as e:
             # 预期内的拒绝（缺文件、句子越界、采样率不符）：400，别和"服务真的崩了"混在一起
             log("WARN", str(e))

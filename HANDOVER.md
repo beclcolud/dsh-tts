@@ -301,10 +301,12 @@ node scripts/install.mjs --uninstall
 - **taskkill**：代码里本来就没用它——停服务一律走 HTTP `{"req":"shutdown"}`。文档里那几条"别用 taskkill"仍然成立。
 - **⚠️ 仍然只在 Windows 上验证过**：全部实测、全部测试、模型推理都在 Windows + NVIDIA 上跑。Linux / ROCm / CPU 的代码路径已经写好、平台分支有单测，但**没有真正执行过**（这台机器没装 WSL，也没有 Linux 环境）。真要上 Linux，第一步先跑 `python bootstrap_env.py --verify`。
 
-### J. 前端只有两个点
+### J. 前端
 
-- 播放卡片 + 状态圆点。没有进度条、没有取消按钮、没有历史列表。
-- 只与 web 端 slot 对接，非 web 界面不显示。
+- **取消（已做，2026-11-18）**：服务端新增 `{"req":"cancel"}`，在**取 LOCK 之前**处理，所以能立刻生效而不是排在长任务后面。渲染循环逐句检查标记，取消后停在当前句、已合成的部分保留。插件侧注册了 `POST /api/dsh-tts/cancel.json` 转发给它；客户端合成中显示"取消"按钮。实测 30 秒的渲染在 6.8 秒停住。
+- **进度（部分）**：状态圆点在有任务时变成"合成中 · N 秒"，每 2 秒刷新。**没有真正的进度百分比**——服务端不知道总时长，只能给已用时间。
+- **修正一个报告 bug**：原来 health 用 `LOCK.locked()` 判断忙，而用 POST 调 health 时它自己正持着锁，会永远报 busy。改成看"当前记录的请求"，GET/POST 都准。
+- 仍然没有：历史列表、按阶段细分的进度、非 web 界面适配。
 
 ### K. 测试与清理
 
@@ -396,6 +398,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 反听字幕接线 | `lib/index.js` + `lib/plan.js` + `lib/clips.js` + `server/tts_server.py` | `04S/` + 正文留空 = 反听：按标记区间切原片音频 → ASR 转写 → 强制对齐 → 字级字幕，自动并入全片 SRT（按入点偏移）。对齐不可用时退回按字数分配。`plan` 阶段把它标成"字幕（反听）"并跳过时长估算 |
 | picks.json 换键 | `lib/picks.js`（新）+ `lib/index.js` | 键从"句序"改成"句序@文本hash@音色标签"，带历史与 current 指针；旧文件自动迁移。出多版时会提示"这句在这个音色下上次选的是第几版"。测试：`test_picks.mjs`（20 项） |
 | 并发与生命周期 | `lib/guard.js`（新）+ `lib/index.js` + `server/tts_server.py` | 工具级互斥（忙则快速失败、可配等待）、`/health` 暴露 busy、修掉并发 spawn 竞态、启动即退出改为当场报错。测试：`test_guard.mjs`（13 项）+ 真实并发实测 |
+| 前端取消与进度 | `server/tts_server.py` + `lib/index.js` + `lib/client.js` | 服务端 cancel（取锁前处理、逐句检查）；插件注册 POST 取消路由；状态点显示"合成中 N 秒"+取消按钮。顺带修掉 health 在持锁时永远报 busy 的问题 |
 | 时间轴格式 | `lib/timeline.js` + `lib/plan.js` | 非目标格式给出可照做的报错（FCPXML/EDL/非 XML 分别提示）；读 `<timecode>` 并在预检提示偏移风险；标记超出序列时长、标记后缀与文案模式冲突都会告警。测试：`test_timeline_formats.mjs`（20 项） |
 | 跨平台收敛 | `lib/platform.js`（新）+ `scripts/install.mjs` + `一键安装.sh` | 安装按平台选 junction / 符号链接（并修掉卸载时 POSIX 会删到目标目录的坑）、ffmpeg concat 路径按平台转义、编码固定注入。平台分支有单测（`test_platform.mjs` 12 项），但 Linux 实际运行仍未验证 |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
