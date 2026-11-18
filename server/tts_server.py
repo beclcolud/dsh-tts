@@ -535,8 +535,9 @@ def _donor_pad(left, right, sr, n: int):
 def join_with_target(left, right, sr, target_ms: float, pad_fill: str = "donor"):
     """把接缝的停顿规整到一个目标长度，而不是"模型给多少算多少"。
 
-    做法：量出左边尾部、右边头部的真实静音，和目标的差值直接补零或裁掉。
-    不留硬接：补零本身就是完全静音，不存在相位跳变，也就没有咔哒声。
+    做法：量出左边尾部、右边头部的真实静音，比目标长的裁掉、比目标短的补上。
+    补的时候优先用素材自己的静音（donor），合成噪声只在找不到供体时才兜底。
+    返回 (拼接结果, 调整前秒数, 目标秒数, 实际用了哪种填充)。
     """
     import numpy as np
     head, _ = _edge_silence(right, sr)
@@ -544,22 +545,24 @@ def join_with_target(left, right, sr, target_ms: float, pad_fill: str = "donor")
     cur = float(tail + head)
     want = max(0.0, target_ms / 1000.0)
     if abs(cur - want) < 0.005:
-        joined = np.concatenate([left, right])
+        joined, used = np.concatenate([left, right]), "none"
     elif cur < want:
         pad = int(round((want - cur) * sr))
         if pad_fill == "zero":
-            fill = np.zeros(pad, dtype=np.float32)
+            fill, used = np.zeros(pad, dtype=np.float32), "zero"
         elif pad_fill == "noise":
-            fill = _comfort_noise(pad, sr, _noise_rms(left, right, sr))
+            fill, used = _comfort_noise(pad, sr, _noise_rms(left, right, sr)), "noise"
         else:  # donor：优先用素材自己的静音
             fill = _donor_pad(left, right, sr, pad)
+            used = "donor"
             if fill is None:
-                fill = _comfort_noise(pad, sr, _noise_rms(left, right, sr))
+                fill, used = _comfort_noise(pad, sr, _noise_rms(left, right, sr)), "noise-fallback"
         joined = np.concatenate([left, fill, right])
     else:
         cut = int(round((cur - want) / 2.0 * sr))
         joined = np.concatenate([left[: max(1, len(left) - cut)], right[min(len(right) - 1, cut):]])
-    return joined, cur, want
+        used = "cut"
+    return joined, cur, want, used
 
 
 def join_with_overlap(left, right, sr, overlap_ms: float, trigger_ms: float):
@@ -710,11 +713,11 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
         mark = next((c for c in reversed(prev_text.strip()) if c in targets), "")
         if policy == "target":
             want = float(targets.get(mark, SEAM_TARGET_FALLBACK))
-            audio, before_s, _ = join_with_target(audio, nxt, sr, want, pad_fill=pad_fill)
+            audio, before_s, _, fill_used = join_with_target(audio, nxt, sr, want, pad_fill=pad_fill)
             # join_with_target 里 cur 是秒；达成值就是目标值（补零/裁剪后按构造精确）
             seams.append({"i": i, "after": prev_text[-8:], "mark": mark,
                           "before_ms": round(before_s * 1000, 1), "after_ms": round(want, 1),
-                          "target_ms": want, "overlap_ms": 0.0})
+                          "target_ms": want, "overlap_ms": 0.0, "fill": fill_used})
         else:
             audio, start, gap_ms, ov = join_with_overlap(audio, nxt, sr, overlap_ms, trigger_ms)
             # join_with_overlap 返回的 gap_ms 已经是毫秒

@@ -233,8 +233,10 @@ def main() -> int:
                 how = "目标 %.0fms" % s["target_ms"]
             else:
                 how = "交叠 %.1fms" % s["overlap_ms"] if s["overlap_ms"] else "未交叠（空隙没到 120ms 阈值）"
-            print("    接缝%d  调整前 %5.1fms → 调整后 %5.1fms  [%s]  ← 前句结尾「%s」"
-                  % (s["i"], s["before_ms"], s["after_ms"], how, s["after"]))
+            fill = s.get("fill")
+            print("    接缝%d  调整前 %5.1fms → 调整后 %5.1fms  [%s%s]  ← 前句结尾「%s」"
+                  % (s["i"], s["before_ms"], s["after_ms"], how,
+                     ("，填充=" + fill) if fill else "", s["after"]))
             lv = d["level_db"][k] if k < len(d["level_db"]) else None
             print("           波形实测该边界静音: %dms，电平 %s dBFS"
                   % (d["at_boundary"][k] if k < len(d["at_boundary"]) else -1,
