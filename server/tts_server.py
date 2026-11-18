@@ -585,7 +585,7 @@ def join_with_overlap(left, right, sr, overlap_ms: float, trigger_ms: float):
 
 
 
-def normalize_output(a, sr, target_rms_db: float = -20.0, peak_ceiling: float = 0.95):
+def normalize_output(a, sr, target_rms_db: float = -20.0, peak_ceiling: float | None = None):
     """Bring every render to a comparable loudness.
 
     Raw model output varies by 15+ dB between takes, so one clip plays far quieter
@@ -594,6 +594,8 @@ def normalize_output(a, sr, target_rms_db: float = -20.0, peak_ceiling: float = 
     the result would clip.
     """
     import numpy as np
+    if peak_ceiling is None:
+        peak_ceiling = float(CONFIG.get("peak_ceiling", 0.95))
     if len(a) == 0:
         return a
     rms = float(np.sqrt(np.mean(a ** 2)))
@@ -641,7 +643,8 @@ SEAM_TARGET_FALLBACK = 160
 
 def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes: int = 1,
                     do_trim: bool = True, seam: str | None = None, report: dict | None = None,
-                    seam_targets: dict | None = None, pad_fill: str = "donor"):
+                    seam_targets: dict | None = None, pad_fill: str = "donor",
+                    peak_ceiling: float | None = None):
     """Synthesize sentence by sentence so the subtitle timeline is exact.
 
     seam="current"：原策略，保留 25ms 边距，只有空隙 >120ms 才做 10ms 交叉淡化。
@@ -729,7 +732,7 @@ def synth_sentences(kind: str, text: str, voice: dict, gap: float = 0.12, takes:
     if report is not None:
         report["policy"] = policy
         report["seams"] = seams
-    audio = normalize_output(audio, sr)
+    audio = normalize_output(audio, sr, peak_ceiling=peak_ceiling)
     total = len(audio) / sr
     bounds = [(starts[i], starts[i + 1] if i + 1 < len(starts) else total, t) for i, (_a, _b, t) in enumerate(bounds)]
     return audio, int(sr), bounds
@@ -967,6 +970,7 @@ def handle(req: str, body: dict) -> dict:
                                            do_trim=bool(body.get("trim", True)),
                                            seam=body.get("seam"), report=seam_report,
                                            seam_targets=body.get("seam_target_ms"),
+                                           peak_ceiling=body.get("peak_ceiling"),
                                            pad_fill=body.get("seam_fill")
                                            or ("zero" if body.get("seam_noise") is False else "donor"))
         stem = body.get("stem") or ("tts-%d" % int(time.time()))
