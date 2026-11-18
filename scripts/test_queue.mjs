@@ -119,6 +119,25 @@ const main = async () => {
   try { q8.add({ text: '   ' }) } catch (e) { e2 = String(e.message) }
   ok(/不能为空/.test(e2), '空文案报错', e2)
 
+  console.log('[9] PR 任务的字段与校验')
+  const q9 = Q.createQueue({ run: async () => ({ files: [] }) })
+  let e3 = ''
+  try { q9.add({ type: 'timeline', scriptFile: 'x.txt' }) } catch (e) { e3 = String(e.message) }
+  ok(/XML/.test(e3), '缺 XML 报错', e3)
+  let e4 = ''
+  try { q9.add({ type: 'timeline', xmlFile: 'x.xml' }) } catch (e) { e4 = String(e.message) }
+  ok(/文案/.test(e4), '缺文案报错', e4)
+  const pr = q9.add({ type: 'timeline', xmlFile: 'a.xml', scriptFile: 'a.txt', sequence: '2' })
+  ok(pr.type === 'timeline' && pr.sequence === 2, '类型与序列号带上了', { type: pr.type, sequence: pr.sequence })
+
+  console.log('[10] patch 更新展示字段')
+  const q10 = Q.createQueue({ run: async () => { await sleep(80); return { files: [] } } })
+  const j10 = q10.add({ text: '跑着的' })
+  await sleep(20)
+  q10.patch(j10.id, { detail: '第 2/5 段 · 03' })
+  ok(q10.find(j10.id).detail === '第 2/5 段 · 03', 'detail 写进去了', q10.find(j10.id).detail)
+  ok(q10.patch('不存在', { detail: 'x' }) === null, '不存在返回 null')
+
   console.log('')
   console.log(fail === 0 ? '全部通过' : fail + ' 项失败')
   process.exit(fail === 0 ? 0 : 1)

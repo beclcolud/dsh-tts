@@ -54,7 +54,7 @@
   var BASE = '/api/dsh-tts/'
   // 页面需要的接口版本；插件启动时会在 status 里回自己的版本
   var NEED_API = 2
-  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { text: '', voice: '', title: '' }, saving: false, saveMsg: '', loading: false, error: '', creating: false }
+  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { type: 'text', text: '', voice: '', title: '', xmlFile: '', scriptFile: '', sequence: '' }, saving: false, saveMsg: '', loading: false, error: '', creating: false }
   function el(id) { return document.getElementById(id) }
   function api(name, opt) {
     return fetch(BASE + name, Object.assign({ cache: 'no-store' }, opt || {})).then(function (r) {
@@ -165,20 +165,43 @@
       + '<button class="act" id="qstop"' + (q.running ? '' : ' disabled') + '>停止当前</button>'
       + '<button class="act" id="qclear">清空未完成</button></div>'
 
-    h += '<div class="card"><div class="dim" style="margin-bottom:4px">新任务</div>'
-      + '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
-      + '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认）" style="max-width:46%">'
-      + '<input type="text" id="qtitle" value="' + esc(state.draft.title) + '" placeholder="文件名（留空自动）" style="max-width:46%">'
-      + '<button class="act" id="qadd">加入队列</button></div></div>'
+    var isPr = state.draft.type === 'timeline'
+    h += '<div class="card"><div class="row" style="margin-bottom:6px"><span class="dim">新任务</span>'
+      + '<select class="act" id="qtype">'
+      + '<option value="text"' + (isPr ? '' : ' selected') + '>单段文案</option>'
+      + '<option value="timeline"' + (isPr ? ' selected' : '') + '>PR 时间轴</option>'
+      + '</select></div>'
+    if (isPr) {
+      h += '<div class="row"><input type="text" id="qxml" value="' + esc(state.draft.xmlFile) + '" placeholder="PR 导出的 FCP XML 路径" style="max-width:70%"></div>'
+        + '<div class="row" style="margin-top:6px"><input type="text" id="qscript" value="' + esc(state.draft.scriptFile) + '" placeholder="外侧文案路径（01/正文 02S/ 03V/）" style="max-width:70%"></div>'
+        + '<div class="dim" style="margin-top:4px">XML 与文案都是本机绝对路径；PR 里要先打好范围标记（名称 01、02…）。</div>'
+    } else {
+      h += '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
+    }
+    h += '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认）" style="max-width:46%">'
+      + '<input type="text" id="qtitle" value="' + esc(state.draft.title) + '" placeholder="' + (isPr ? '输出目录名（留空自动）' : '文件名（留空自动）') + '" style="max-width:46%">'
+      + (isPr ? '<input type="text" id="qseq" value="' + esc(state.draft.sequence) + '" placeholder="序列号" style="max-width:70px">' : '')
+      + '<button class="act" id="qadd">加入队列</button></div>'
+      + '<div class="dim" style="margin-top:6px;line-height:1.6">'
+      + '音色可填：预设名（Serena / Uncle_Fu / Vivian / Dylan / Eric）、音色库里的名字、一段描述（如「低沉沙哑的中年男声」），或参考音视频的本地路径；'
+      + '留空用默认音色（当前：' + esc((state.status && state.status.defaultVoice) || '未设置') + '）。'
+      + (isPr
+        ? '<br>PR 任务是一条队列记录，内部逐段合成并显示「第几段/共几段」；预检不过会直接失败并给出原因（不烧 GPU）。'
+        : '<br>文案会按句切分自动生成字幕；长文案自动分批。')
+      + '加入后立即开始（除非已暂停），一次只跑一条。'
+      + '</div></div>'
 
     if (!q.jobs.length) return h + '<div class="empty">队列是空的。</div>'
     h += '<div class="card">'
     q.jobs.forEach(function (job) {
       var color = job.status === 'running' ? 'var(--accent)' : job.status === 'done' ? 'var(--ok)' : job.status === 'failed' ? 'var(--err)' : 'var(--dim)'
-      var title = job.title || (job.text.length > 40 ? job.text.slice(0, 40) + '…' : job.text)
+      var title = job.title || (job.type === 'timeline'
+        ? (String(job.xmlFile || '').split(/[\\/]/).pop() || 'PR 任务')
+        : (job.text.length > 40 ? job.text.slice(0, 40) + '…' : job.text))
       h += '<div class="item"><div class="row"><i class="dot" style="background:' + color + '"></i>'
         + '<span class="name" style="flex:1" title="' + esc(job.text) + '">' + esc(title) + '</span>'
-        + '<span class="dim">' + esc(JOB_LABEL[job.status] || job.status) + '</span>'
+        + (job.type === 'timeline' ? '<span class="dim" style="border:1px solid var(--line);border-radius:8px;padding:0 5px">PR</span>' : '')
+        + '<span class="dim">' + esc(JOB_LABEL[job.status] || job.status) + (job.detail ? ' · ' + esc(job.detail) : '') + '</span>'
         + (job.status === 'failed' ? '<button class="act qretry" data-id="' + job.id + '">重试</button>' : '')
         + (job.status === 'running' ? '' : '<button class="act qdel" data-id="' + job.id + '">删除</button>')
         + '</div>'
@@ -279,6 +302,14 @@
   function bind() {
     var qt = el('qtext')
     if (qt) qt.oninput = function () { state.draft.text = qt.value }
+    var qtype = el('qtype')
+    if (qtype) qtype.onchange = function () { state.draft.type = qtype.value; state.error = ''; render() }
+    var qxml = el('qxml')
+    if (qxml) qxml.oninput = function () { state.draft.xmlFile = qxml.value }
+    var qscript = el('qscript')
+    if (qscript) qscript.oninput = function () { state.draft.scriptFile = qscript.value }
+    var qseq = el('qseq')
+    if (qseq) qseq.oninput = function () { state.draft.sequence = qseq.value }
     var qv = el('qvoice')
     if (qv) qv.oninput = function () { state.draft.voice = qv.value }
     var qti = el('qtitle')
@@ -291,10 +322,21 @@
     if (qc) qc.onclick = function () { qpost('clear') }
     var qa = el('qadd')
     if (qa) qa.onclick = function () {
+      if (state.draft.type === 'timeline') {
+        var xml = state.draft.xmlFile.trim()
+        var script = state.draft.scriptFile.trim()
+        if (!xml || !script) { state.error = 'PR 任务要填 XML 路径和文案路径'; render(); return }
+        qpost('add', {
+          type: 'timeline', xmlFile: xml, scriptFile: script,
+          sequence: state.draft.sequence.trim(), voice: state.draft.voice.trim(), title: state.draft.title.trim(),
+        })
+        state.draft = Object.assign({}, state.draft, { xmlFile: '', scriptFile: '', title: '' })
+        return
+      }
       var text = state.draft.text.trim()
       if (!text) { state.error = '先写文案再加入队列'; render(); return }
       qpost('add', { text: text, voice: state.draft.voice.trim(), title: state.draft.title.trim() })
-      state.draft = { text: '', voice: state.draft.voice, title: '' }
+      state.draft = Object.assign({}, state.draft, { text: '', title: '' })
     }
     Array.prototype.forEach.call(document.querySelectorAll('.qretry'), function (b) {
       b.onclick = function () { qpost('retry', { id: b.getAttribute('data-id') }) }
