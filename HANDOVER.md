@@ -315,6 +315,7 @@ node scripts/install.mjs --uninstall
   2. 再用**同一个 id 当 key** 注册 `sidebar.right.pane.tab` 与 `sidebar.right.pane.tab.title`
   3. 引导页卡片由默认 EntryBox 渲染，点它走 `tab.actions.openTab(kind)`——不需要自己写卡片
 - **⚠️ 仍然没有视觉验收**：面板代码过了语法检查；路由链路 8 项测试、客户端注册逻辑 14 项测试（`test_client_wiring.mjs`，用假 window 加载客户端模块）；界面本身没人点过。
+- **查看不启动服务（2026-11-18）**：历史与音色库的读取改成插件端直接读文件系统（`scanOutputs` / `readBankIndex`），不再 `ensureService`。实测服务停着时两次读取共 4ms、返回真实数据，且读完服务仍停着。只有写操作（改名/删除/新建）和配音本身才会拉起服务。
 - 仍然没有：批量队列、波形预览、非 web 界面适配。
 
 ### K. 测试与清理
