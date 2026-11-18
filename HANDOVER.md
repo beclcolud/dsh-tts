@@ -243,7 +243,7 @@ node scripts/install.mjs --uninstall
 - 无音色维度：同一句换音色重录会互相覆盖。
 - 无版本/撤销。
 - 键只有句子序号，文案改了以后旧选择会对错句。
-- **建议**：以 `(文本 hash, 句子序号)` 为键，附音色名与时间戳。
+- **已解决（2026-11-18，v0.2.11）**：键改成 `<句序>@<文本hash>@<音色标签>`，值里带 `picks[]` 历史（最多 10 条）和 `current` 指针。实测：改文案后旧选择查不到（不再串句），同一句换音色重录也各自独立。旧文件读入时自动迁移到 version 2，旧条目会标 `migratedFrom: "v1"`、音色标 `unknown`。
 
 ### C. 原片人声反听字幕没接进工具
 
@@ -385,6 +385,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 停顿不填纯零 | `server/tts_server.py` | 规整停顿需要"补"时，原来补的是纯 0（实测 -240 dBFS）。模型自己的间隙是 -60~-66 dBFS，于是插入段听起来像"断了一下"。现在改为按两端实测底噪生成同电平柔和噪声（轻度低通 + 8ms 淡入淡出），实测填到 -66.5 dBFS，与自然间隙一致 |
 | 强制对齐 | `server/tts_server.py` + `lib/synth.js` + `lib/index.js` | 新增 `align` 端点与 `voiceover({align:true})`；字级时间经 `bindAlignedText`（补回被丢的标点）→ `groupAlignedCues`（按标点/长度/停顿断行）生成字幕。含两个单位坑的修正。测试：`test_align.mjs`（14 项，免模型）+ `test_align_model.py`（端到端） |
 | 反听字幕接线 | `lib/index.js` + `lib/plan.js` + `lib/clips.js` + `server/tts_server.py` | `04S/` + 正文留空 = 反听：按标记区间切原片音频 → ASR 转写 → 强制对齐 → 字级字幕，自动并入全片 SRT（按入点偏移）。对齐不可用时退回按字数分配。`plan` 阶段把它标成"字幕（反听）"并跳过时长估算 |
+| picks.json 换键 | `lib/picks.js`（新）+ `lib/index.js` | 键从"句序"改成"句序@文本hash@音色标签"，带历史与 current 指针；旧文件自动迁移。出多版时会提示"这句在这个音色下上次选的是第几版"。测试：`test_picks.mjs`（20 项） |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。
