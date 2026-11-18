@@ -154,6 +154,34 @@
     bind()
   }
 
+  // 选文件后的统一读取：Word 走解析接口，其它按纯文本读
+  function isWordFile(name) { return /\.(docx|doc)$/i.test(String(name || '')) }
+  function readPickedFile(file, onText, onErr) {
+    if (isWordFile(file.name)) {
+      var reader = new FileReader()
+      reader.onerror = function () { onErr('读不了这个文件') }
+      reader.onload = function () {
+        var bytes = new Uint8Array(reader.result)
+        var bin = ''
+        for (var i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
+        }
+        var b64 = ''
+        try { b64 = btoa(bin) } catch (e) { onErr('文件太大或编码异常'); return }
+        post('docx.json', { name: file.name, base64: b64 }).then(function (j) {
+          if (!j.ok) { onErr(j.error || '解析失败'); return }
+          onText(String(j.text || ''))
+        }).catch(function (e) { onErr(String(e && e.message ? e.message : e)) })
+      }
+      reader.readAsArrayBuffer(file)
+      return
+    }
+    var tr = new FileReader()
+    tr.onerror = function () { onErr('读不了这个文件') }
+    tr.onload = function () { onText(String(tr.result || '')) }
+    tr.readAsText(file)
+  }
+
   var JOB_LABEL = { queued: '排队中', running: '正在合成', done: '完成', failed: '失败' }
 
   function renderQueue() {
@@ -177,12 +205,12 @@
         + '<input type="file" id="qxmlfile" accept=".xml,text/xml,application/xml" style="flex:1;min-width:0;font-size:12px">'
         + '<span class="dim">' + (state.draft.xmlName ? esc(state.draft.xmlName) : '未选择') + '</span></div>'
         + '<div class="row" style="margin-top:6px"><span class="dim" style="width:76px">外侧文案</span>'
-        + '<input type="file" id="qscriptfile" accept=".txt,.md,text/plain" style="flex:1;min-width:0;font-size:12px">'
+        + '<input type="file" id="qscriptfile" accept=".txt,.md,.docx,.doc,text/plain" style="flex:1;min-width:0;font-size:12px">'
         + '<span class="dim">' + (state.draft.scriptName ? esc(state.draft.scriptName) : '未选择') + '</span></div>'
         + '<div class="dim" style="margin-top:4px">选好会自动读取内容，文件会存到工作目录的 <code>.dsh-tts/uploads/</code>。PR 里要先打好范围标记（名称 01、02…）。</div>'
     } else {
       h += '<div class="row" style="margin-bottom:6px"><span class="dim" style="width:76px">从文件导入</span>'
-        + '<input type="file" id="qtextfile" accept=".txt,.md,.markdown,text/plain" style="flex:1;min-width:0;font-size:12px">'
+        + '<input type="file" id="qtextfile" accept=".txt,.md,.markdown,.docx,.doc,text/plain" style="flex:1;min-width:0;font-size:12px">'
         + '<span class="dim">' + (state.draft.textName ? esc(state.draft.textName) : '可选') + '</span></div>'
         + '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分（也可以从上面的文件导入）" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
     }
@@ -312,15 +340,12 @@
     if (qtf) qtf.onchange = function () {
       var f = qtf.files && qtf.files[0]
       if (!f) return
-      var reader = new FileReader()
-      reader.onload = function () {
-        state.draft.text = String(reader.result || '')
+      readPickedFile(f, function (text) {
+        state.draft.text = text
         state.draft.textName = f.name
         state.error = ''
         render()
-      }
-      reader.onerror = function () { state.error = '读不了这个文件：' + (reader.error && reader.error.message); render() }
-      reader.readAsText(f)
+      }, function (msg) { state.error = '读不了这个文件：' + msg; render() })
     }
     var qt = el('qtext')
     if (qt) qt.oninput = function () { state.draft.text = qt.value }
@@ -330,29 +355,23 @@
     if (qxf) qxf.onchange = function () {
       var f = qxf.files && qxf.files[0]
       if (!f) return
-      var reader = new FileReader()
-      reader.onload = function () {
-        state.upload.xmlText = String(reader.result || '')
+      readPickedFile(f, function (text) {
+        state.upload.xmlText = text
         state.draft.xmlName = f.name
         state.error = ''
         render()
-      }
-      reader.onerror = function () { state.error = '读不了这个文件：' + (reader.error && reader.error.message); render() }
-      reader.readAsText(f)
+      }, function (msg) { state.error = '读不了这个文件：' + msg; render() })
     }
     var qsf = el('qscriptfile')
     if (qsf) qsf.onchange = function () {
       var f2 = qsf.files && qsf.files[0]
       if (!f2) return
-      var reader2 = new FileReader()
-      reader2.onload = function () {
-        state.upload.scriptText = String(reader2.result || '')
+      readPickedFile(f2, function (text) {
+        state.upload.scriptText = text
         state.draft.scriptName = f2.name
         state.error = ''
         render()
-      }
-      reader2.onerror = function () { state.error = '读不了这个文件：' + (reader2.error && reader2.error.message); render() }
-      reader2.readAsText(f2)
+      }, function (msg) { state.error = '读不了这个文件：' + msg; render() })
     }
     var qseq = el('qseq')
     if (qseq) qseq.oninput = function () { state.draft.sequence = qseq.value }
