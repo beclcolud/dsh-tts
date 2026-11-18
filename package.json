@@ -1,6 +1,6 @@
 {
   "name": "dsh-tts",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "本地配音工作台：文案转人声 + 逐句字幕（可出成片），中/英/日三语，可离线翻译；支持按 PR 时间轴分段配音、原片反听字幕、句子级重录拼回。",
   "meta": {
     "title": "配音 TTS",
@@ -43,5 +43,13 @@
     "qwen3-tts",
     "voiceover"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beclcolud/dsh-tts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/beclcolud/dsh-tts/issues"
+  },
+  "homepage": "https://github.com/beclcolud/dsh-tts#readme",
   "license": "MIT"
 }
