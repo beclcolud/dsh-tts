@@ -13,6 +13,9 @@
           design: 'E:\<工作区>\models\Qwen3-TTS-1.7B-VoiceDesign'
           base: 'E:\<工作区>\models\Qwen3-TTS-0.6B-Base'
           asr: 'E:\<工作区>\models\Qwen3-ASR-0.6B'
+          # 强制对齐器（约 1.2G）。配了它才能用 voiceover({align:true}) 重排字幕；
+          # 不配就只用逐句字幕（句级时间本来就是精确的，只是长句不拆行）。
+          aligner: 'E:\<工作区>\models\Qwen3-ForcedAligner-0.6B'
         # 输出根目录；留空则落在当前会话工作区的 配音/ 下
         workDir: 'E:\<工作区>\配音'
         defaultVoice: '新闻联播音色'

@@ -133,6 +133,21 @@ class Models:
             self.obj = Qwen3ASRModel.from_pretrained(
                 CONFIG["models"]["asr"], dtype=torch.bfloat16, device_map="cuda:0",
                 max_inference_batch_size=1, max_new_tokens=512)
+        elif kind == "aligner":
+            # 强制对齐器：给"音频 + 文本"，回每个字/词的真实起止时间。
+            # 和 ASR 一样要 nagisa 假模块（qwen_asr 的顶层导入会连带它）。
+            import types
+            fake = types.ModuleType("nagisa")
+            fake.tagging = lambda *a, **k: []
+            sys.modules.setdefault("nagisa", fake)
+            from qwen_asr import Qwen3ForcedAligner
+            path = CONFIG.get("models", {}).get("aligner")
+            if not path:
+                raise ValueError("配置里没有 models.aligner，强制对齐不可用")
+            if not Path(path).exists():
+                raise ValueError("对齐模型不存在：" + str(path))
+            self.obj = Qwen3ForcedAligner.from_pretrained(
+                path, dtype=torch.bfloat16, device_map="cuda:0")
         else:
             raise ValueError("unknown model kind: " + kind)
         self.kind = kind
@@ -1140,6 +1155,32 @@ def handle(req: str, body: dict) -> dict:
             lines.append("%d\n%s --> %s\n%s\n" % (i, fmt_ts(st), fmt_ts(en), txt))
         srt.write_text("\n".join(lines), encoding="utf-8")
         return {"text": text, "cues": [{"start": round(st, 3), "end": round(en, 3), "text": t} for st, en, t in bounds], "srt": str(srt)}
+
+    if req == "align":
+        """强制对齐：把文本里的每个字/词对到音频上的真实时间。
+
+        单位统一成毫秒。上游 ForcedAlignItem 的注解写的是 seconds，实际产出是
+        timestamp_token × timestamp_segment_time，也就是毫秒——这里按音频时长
+        自己判断一次，两种都可能，别让调用方去猜。
+        """
+        audio_path = Path(body["audio"])
+        text = str(body["text"])
+        a, sr = load_wav(audio_path)
+        model = MODELS.get("aligner")
+        res = model.align(audio=[(a, sr)], text=[text],
+                          language=[body.get("language") or "Chinese"])
+        items = []
+        if res:
+            for it in (getattr(res[0], "items", None) or []):
+                items.append({"text": str(getattr(it, "text", "")),
+                              "start": float(getattr(it, "start_time", 0.0)),
+                              "end": float(getattr(it, "end_time", 0.0))})
+        dur = len(a) / float(sr)
+        if items and max(r["end"] for r in items) <= dur * 1.05:
+            for r in items:          # 落在秒域，换算成毫秒
+                r["start"] *= 1000.0
+                r["end"] *= 1000.0
+        return {"items": items, "count": len(items), "unit": "ms", "dur": round(dur, 3)}
 
     if req == "asr":
         model = MODELS.get("asr")

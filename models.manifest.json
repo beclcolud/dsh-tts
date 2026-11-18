@@ -84,6 +84,22 @@
       "role": "已放弃，配置里不引用，可删（4.3G）",
       "dir": "Qwen3-TTS-1.7B-CustomVoice",
       "bytes": 4520222456
+    },
+    {
+      "key": "aligner",
+      "required": false,
+      "role": "强制对齐（voiceover align:true 用；不配就退回逐句字幕）",
+      "dir": "Qwen3-ForcedAligner-0.6B",
+      "bytes": null,
+      "keyFile": "model.safetensors",
+      "note": "0.6B 约 1.2G。从 hf-mirror 下载时若报 OSError: I/O error 5，设置 HF_HUB_DISABLE_XET=1（xet 后端在当前环境写不进去）。",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt"
+      ]
     }
   ],
   "uvr": {
