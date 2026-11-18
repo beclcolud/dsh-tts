@@ -3,8 +3,12 @@ from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.oxml.ns import qn
 
-SRC = pathlib.Path('E:/<工作区>/dsh-tts/HANDOVER.md')
-OUT = pathlib.Path('E:/<工作区>/dsh-tts/HANDOVER.docx')
+import os
+from pathlib import Path
+
+HOME = Path(os.environ.get('DSH_TTS_HOME') or Path(__file__).resolve().parents[2])
+SRC = pathlib.Path(str(HOME) + r"/dsh-tts/HANDOVER.md")
+OUT = pathlib.Path(str(HOME) + r"/dsh-tts/HANDOVER.docx")
 src = SRC.read_text(encoding='utf-8').splitlines()
 doc = Document()
 sec = doc.sections[0]

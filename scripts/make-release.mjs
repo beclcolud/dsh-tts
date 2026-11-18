@@ -33,7 +33,7 @@ const LEAKS = [
   { re: /[A-Za-z]:\\\\[^\s'"`]+/, label: 'Windows 绝对路径' },
   { re: /\/(Users|home)\/[A-Za-z0-9._-]+/, label: 'Unix 家目录路径' },
   { re: /[\w.+-]+@[\w-]+\.[\w.]{2,}/, label: '邮箱地址' },
-  { re: /<工作区>/, label: '本机目录名' },
+  { re: /工作区\d{5,}/, label: '本机目录名' },
 ]
 const TEXT_EXT = new Set(['.js', '.mjs', '.py', '.json', '.yml', '.yaml', '.md', '.html', '.txt', '.sh', '.cmd'])
 

@@ -1,5 +1,9 @@
 import json, re, pathlib
-p = pathlib.Path(r'E:/<工作区>/配音/voicebank/index.json')
+import os
+from pathlib import Path
+
+HOME = Path(os.environ.get('DSH_TTS_HOME') or Path(__file__).resolve().parents[2])
+p = pathlib.Path(str(HOME) + r"/配音/voicebank/index.json")
 if not p.exists():
     print('no bank'); raise SystemExit
 d = json.loads(p.read_text(encoding='utf-8'))

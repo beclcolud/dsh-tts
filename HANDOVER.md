@@ -154,7 +154,7 @@ dsh-tts/
 不是标准 venv，是 **ComfyUI 便携包自带的 Python**：
 
 ```
-E:\<工作区>\ComfyUI\ComfyUI_windows_portable\python_embeded\python.exe
+<work>\ComfyUI\ComfyUI_windows_portable\python_embeded\python.exe
 ```
 
 额外库装在 `_tts_probe/pylibs`（由 `libs` 配置注入 `sys.path`）：38 个包，逐包 pin 在 `requirements/base.txt`。
@@ -193,7 +193,7 @@ node scripts/install.mjs --uninstall
 | `pythonPath` | ComfyUI 便携包 python | 解释器 |
 | `libs` | `_tts_probe/pylibs` | 额外库目录 |
 | `models.*` | 见上表 | 四个模型路径 |
-| `workDir` | `E:\<工作区>\配音` | 产物根目录 |
+| `workDir` | `<work>\配音` | 产物根目录 |
 | `defaultVoice` | `新闻联播音色` | 不指定音色时用 |
 | `idleShutdownMs` | 300000 | 空闲多久自退，0 = 常驻 |
 | `diction` | true | 附加"咬字清晰、不要连读"指令 |
@@ -362,7 +362,7 @@ curl -s -X POST http://127.0.0.1:17322/ -H "Content-Type: application/json" \
   -d '{"req":"say","text":"测试一下。","kind":"custom","voice":{"speaker":"Dylan"},"stem":"t"}'
 
 # 3. 插件装了没
-ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>/dsh-tts 的 junction
+ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 <work>/dsh-tts 的 junction
 
 # 4. 工具在不在（重启 DSH 后）
 #    应能看到 voiceover / voiceover_timeline / voiceover_retakes 三个工具
