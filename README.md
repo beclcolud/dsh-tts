@@ -33,7 +33,7 @@
 | 按 PR 时间轴分段配音 | `voiceover_timeline`：stage=plan 预检 → stage=run 合成 |
 | 从原片反听字幕 | 文案写 `04S/` 且正文留空 |
 | 单句重录并拼回整段 | `voiceover_retakes`（按采样点边界替换） |
-| 中/英/日 三语 | `language: 'zh' | 'en' | 'ja'` |
+| 中/英/日 三语 | `language: zh / en / ja` |
 | 先翻译再配音 | `translate: { from, to }`（本机 NLLB，离线） |
 | 批量排队 | 工作台「队列」页：单段文案 / PR 时间轴都可排队 |
 | 看进度、取消、翻产物、管音色、改参数 | 右侧边栏「配音工作台」 |
