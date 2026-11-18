@@ -54,7 +54,7 @@
   var BASE = '/api/dsh-tts/'
   // 页面需要的接口版本；插件启动时会在 status 里回自己的版本
   var NEED_API = 2
-  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { type: 'text', text: '', voice: '', title: '', xmlName: '', scriptName: '', sequence: '' },
+  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { type: 'text', text: '', textName: '', voice: '', title: '', xmlName: '', scriptName: '', sequence: '' },
     upload: { xmlText: '', scriptText: '' }, saving: false, saveMsg: '', loading: false, error: '', creating: false }
   function el(id) { return document.getElementById(id) }
   function api(name, opt) {
@@ -181,7 +181,10 @@
         + '<span class="dim">' + (state.draft.scriptName ? esc(state.draft.scriptName) : '未选择') + '</span></div>'
         + '<div class="dim" style="margin-top:4px">选好会自动读取内容，文件会存到工作目录的 <code>.dsh-tts/uploads/</code>。PR 里要先打好范围标记（名称 01、02…）。</div>'
     } else {
-      h += '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
+      h += '<div class="row" style="margin-bottom:6px"><span class="dim" style="width:76px">从文件导入</span>'
+        + '<input type="file" id="qtextfile" accept=".txt,.md,.markdown,text/plain" style="flex:1;min-width:0;font-size:12px">'
+        + '<span class="dim">' + (state.draft.textName ? esc(state.draft.textName) : '可选') + '</span></div>'
+        + '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分（也可以从上面的文件导入）" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
     }
     h += '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认）" style="max-width:46%">'
       + '<input type="text" id="qtitle" value="' + esc(state.draft.title) + '" placeholder="' + (isPr ? '输出目录名（留空自动）' : '文件名（留空自动）') + '" style="max-width:46%">'
@@ -192,7 +195,7 @@
       + '留空用默认音色（当前：' + esc((state.status && state.status.defaultVoice) || '未设置') + '）。'
       + (isPr
         ? '<br>PR 任务是一条队列记录，内部逐段合成并显示「第几段/共几段」；预检不过会直接失败并给出原因（不烧 GPU）。'
-        : '<br>文案会按句切分自动生成字幕；长文案自动分批。')
+        : '<br>文案可以直接贴，也可以选 .txt/.md 导入（导入后仍可编辑）；会按句切分生成字幕，长文案自动分批。')
       + '加入后立即开始（除非已暂停），一次只跑一条。'
       + '</div></div>'
 
@@ -305,6 +308,20 @@
   }
 
   function bind() {
+    var qtf = el('qtextfile')
+    if (qtf) qtf.onchange = function () {
+      var f = qtf.files && qtf.files[0]
+      if (!f) return
+      var reader = new FileReader()
+      reader.onload = function () {
+        state.draft.text = String(reader.result || '')
+        state.draft.textName = f.name
+        state.error = ''
+        render()
+      }
+      reader.onerror = function () { state.error = '读不了这个文件：' + (reader.error && reader.error.message); render() }
+      reader.readAsText(f)
+    }
     var qt = el('qtext')
     if (qt) qt.oninput = function () { state.draft.text = qt.value }
     var qtype = el('qtype')
@@ -365,8 +382,10 @@
       }
       var text = state.draft.text.trim()
       if (!text) { state.error = '先写文案再加入队列'; render(); return }
-      qpost('add', { text: text, voice: state.draft.voice.trim(), title: state.draft.title.trim() })
-      state.draft = Object.assign({}, state.draft, { text: '', title: '' })
+      // 没填文件名就用导入的文件名（去掉扩展名），省得每次手输
+      var autoTitle = state.draft.textName ? state.draft.textName.replace(/\.[^.]+$/, '') : ''
+      qpost('add', { text: text, voice: state.draft.voice.trim(), title: state.draft.title.trim() || autoTitle })
+      state.draft = Object.assign({}, state.draft, { text: '', textName: '', title: '' })
     }
     Array.prototype.forEach.call(document.querySelectorAll('.qretry'), function (b) {
       b.onclick = function () { qpost('retry', { id: b.getAttribute('data-id') }) }
