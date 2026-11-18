@@ -309,7 +309,12 @@ node scripts/install.mjs --uninstall
 - **工作台面板（已做，2026-11-18）**：右侧边栏新增「配音工作台」标签，三页——任务（真实进度 `第 N/M 句` + 取消 + 休眠倒计时）、历史（workDir 产物列表，可试听/下载）、音色库（试听/改名/删除/用描述新建）。
 - **进度是真的**：服务端 `synth_sentences` 逐句更新 `STATE["progress"]`，`/health` 在忙时带出，请求结束（含取消/异常）在 `finally` 里清掉。
 - **挂载方式**：`sidebar.right.pane.tab`（标签体）+ `sidebar.right.pane.tab.title` + `sidebar.right.tab.guide.entry`（引导页入口）。这三个 slot 名是从随包的 `dsh-client-ui-sidebar-terminal` / `-files` 里反查出来的，**没有官方文档**；实现按它们的最小用法写，三个 slot 分开 try，任一不兼容不影响另外两个。
-- **⚠️ 没做视觉验收**：面板代码只过了语法检查，路由链路有 8 项自动化测试；界面本身没人点过。
+- **⚠️ 第一版没出现引导页卡片，根因**：只往 slot 里注册了内容，**没向 `sidebarRightTabs` 注册标签类型**。
+  右侧边栏的引导页条目是从标签注册表的 `guide` 数组里长出来的（`definition.guide ?? []`），slot 只负责渲染。正确顺序：
+  1. `ctx.sidebarRightTabs.register({ id, kind, title(), guide: [{ id, order, title(), description() }] })`
+  2. 再用**同一个 id 当 key** 注册 `sidebar.right.pane.tab` 与 `sidebar.right.pane.tab.title`
+  3. 引导页卡片由默认 EntryBox 渲染，点它走 `tab.actions.openTab(kind)`——不需要自己写卡片
+- **⚠️ 仍然没有视觉验收**：面板代码过了语法检查；路由链路 8 项测试、客户端注册逻辑 14 项测试（`test_client_wiring.mjs`，用假 window 加载客户端模块）；界面本身没人点过。
 - 仍然没有：批量队列、波形预览、非 web 界面适配。
 
 ### K. 测试与清理
