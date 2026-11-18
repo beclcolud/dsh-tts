@@ -143,6 +143,99 @@ def count_packages(libs: Path) -> list[str]:
     return sorted(p.name for p in libs.glob("*.dist-info"))
 
 
+def download_models(models_dir: Path, only: list[str] | None, dry: bool, mirror: str | None) -> None:
+    """按 models.manifest.json 的 repo 字段下载模型。
+
+    用 huggingface_hub（已在 requirements/base.txt 里钉了版本）。默认走 hf-mirror，
+    国内直连 huggingface.co 经常超时。--dry-run 只打印计划。
+    """
+    if not MANIFEST.exists():
+        bad("找不到 models.manifest.json")
+        return
+    if mirror:
+        os.environ["HF_ENDPOINT"] = mirror
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    # 元数据缓存放到模型目录里，别写用户家目录（那里常因为权限报 WinError 5）
+    os.environ.setdefault("HF_HOME", str(models_dir / ".hf"))
+    say("    来源：%s" % (os.environ.get("HF_ENDPOINT") or "https://huggingface.co"))
+    man = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    entries = man["models"]
+    if only:
+        only = [k.strip() for item in only for k in str(item).split(",") if k.strip()]
+        unknown = [k for k in only if k not in {m["key"] for m in entries}]
+        if unknown:
+            bad("未知的模型 key：%s（可选：%s）" % (", ".join(unknown), ", ".join(m["key"] for m in entries)))
+            return
+        entries = [m for m in entries if m["key"] in only]
+    else:
+        # 不带 --model 时跳过已弃用的（custom17b 4.5G，配置里根本不引用）
+        entries = [m for m in entries if not m.get("deprecated")]
+
+    todo = []
+    for m in entries:
+        target = models_dir / m["dir"]
+        if complete(m, target):
+            ok("%s 已完整，跳过" % m["dir"])
+            continue
+        if not m.get("repo"):
+            warn("%s 没有 repo 字段，无法自动下载（见 models.manifest.json）" % m["dir"])
+            continue
+        todo.append((m, target))
+
+    if not todo:
+        say("")
+        say("    没有需要下载的模型。")
+        return
+
+    total = sum(int(m.get("bytes") or 0) for m, _ in todo)
+    say("")
+    say("    待下载 %d 个，合计约 %.1f GB：" % (len(todo), total / 1e9))
+    for m, target in todo:
+        say("      %-34s %-42s %5.1f GB -> %s"
+            % (m["dir"], m["repo"], int(m.get("bytes") or 0) / 1e9, target))
+    if dry:
+        say("")
+        say("    --dry-run：没有真的下载。去掉 --dry-run 执行。")
+        return
+
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as e:
+        bad("没有 huggingface_hub（%s），先跑 --install" % type(e).__name__)
+        return
+
+    for m, target in todo:
+        say("")
+        say("    ↓ %s（%s）" % (m["dir"], m["repo"]))
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            snapshot_download(
+                m["repo"],
+                local_dir=str(target),
+                # 只拿会用到的格式，别把 onnx / 旧版 .pth 一起拖下来
+                allow_patterns=["*.json", "*.model", "*.safetensors", "*.bin", "*.txt", "*.spm"],
+            )
+        except Exception as e:
+            bad("%s 下载失败：%s" % (m["dir"], e))
+            continue
+        if complete(m, target):
+            ok("%s 下载完成" % m["dir"])
+        else:
+            bad("%s 下载了但校验没过（可能是网络中断，重跑会续传）" % m["dir"])
+
+
+def complete(m: dict, target: Path) -> bool:
+    """模型目录是否齐全：关键文件字节数对得上，且清单里的文件都在。"""
+    key = m.get("keyFile")
+    if key and m.get("keyFileBytes"):
+        kp = target / key
+        if not kp.exists() or kp.stat().st_size != m["keyFileBytes"]:
+            return False
+    for f in m.get("files", []):
+        if not (target / f).exists():
+            return False
+    return bool(m.get("files") or key)
+
 def check_models(models_dir: Path) -> None:
     if not MANIFEST.exists():
         bad("找不到 models.manifest.json")
@@ -178,7 +271,9 @@ def check_models(models_dir: Path) -> None:
     if total_missing == 0:
         ok("模型文件齐全")
     say("")
-    say("    不会自动下载。来源参考：%s" % man.get("downloadHints", {}).get("huggingface", ""))
+    say("    下载用：python bootstrap_env.py --download-models            （全部缺失的）")
+    say("            python bootstrap_env.py --download-models --model mt  （只下翻译模型）")
+    say("    来源参考：%s" % man.get("downloadHints", {}).get("huggingface", ""))
 
 
 # ------------------------------------------------------------------ 安装
@@ -391,6 +486,12 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="配合 --install，只打印将要执行的命令")
     ap.add_argument("--verify", action="store_true", help="端到端自检（会加载模型，占显存）")
     ap.add_argument("--check-models", action="store_true", help="只校验模型文件")
+    ap.add_argument("--download-models", action="store_true",
+                    help="按 models.manifest.json 下载缺失的模型（默认跳过已弃用的）")
+    ap.add_argument("--model", action="append", default=None, metavar="KEY",
+                    help="配合 --download-models：只下这几个（base/custom/asr/aligner/design/mt），可重复")
+    ap.add_argument("--mirror", default="https://hf-mirror.com",
+                    help="下载模型用的 HuggingFace 镜像；传空串直连 huggingface.co")
     ap.add_argument("--libs", default=str(HERE.parent / "_tts_probe" / "pylibs"),
                     help="依赖装到哪个目录")
     ap.add_argument("--models-dir", default=str(HERE.parent / "models"))
@@ -443,6 +544,11 @@ def main() -> int:
     if args.check_models:
         step("模型", "按 models.manifest.json 校验 %s" % models_dir)
         check_models(models_dir)
+        return 1 if problems else 0
+
+    if args.download_models:
+        step("模型", "按 models.manifest.json 下载到 %s" % models_dir)
+        download_models(models_dir, args.model, args.dry_run, args.mirror)
         return 1 if problems else 0
 
     if args.install:

@@ -42,6 +42,16 @@ AI 参与了什么、维护者能保证什么、使用前该做哪些检查，�
 | `Qwen3-TTS-1.7B-VoiceDesign` | 用一段描述造音色 | 4.5 GB | 可选 |
 
 清单位于 [models.manifest.json](models.manifest.json)（含每个模型应有的文件与字节数，可校验半截下载）。
+
+**下载**（走 hf-mirror，可续传）：
+
+```bash
+python bootstrap_env.py --download-models                    # 下载全部缺失的（跳过已弃用的）
+python bootstrap_env.py --download-models --model base,custom # 只下指定的
+python bootstrap_env.py --download-models --dry-run          # 只看要下多少
+```
+
+模型 key：`base` `custom` `asr` `aligner` `design` `mt` `custom17b`（已弃用）。
 不装对齐器：`align: true` 与反听不可用，其余照常。不装翻译模型：只是没有翻译功能。
 
 ### 3. 安装
