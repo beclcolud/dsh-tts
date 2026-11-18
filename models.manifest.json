@@ -92,7 +92,7 @@
       "dir": "Qwen3-ForcedAligner-0.6B",
       "bytes": null,
       "keyFile": "model.safetensors",
-      "note": "0.6B 约 1.2G。从 hf-mirror 下载时若报 OSError: I/O error 5，设置 HF_HUB_DISABLE_XET=1（xet 后端在当前环境写不进去）。",
+      "note": "约 1.84G。下载前先让用户开 Clash（本机 127.0.0.1:7897 可作 HTTP 代理），直连 huggingface.co 会 12 秒超时；镜像 hf-mirror.com 只作兜底。若走 hf-mirror，务必设 HF_HUB_DISABLE_XET=1，否则大文件报 OSError: I/O error 5（拒绝访问）。",
       "files": [
         "config.json",
         "model.safetensors",
@@ -111,6 +111,8 @@
   "downloadHints": {
     "huggingface": "https://huggingface.co/Qwen  目录名即仓库名",
     "modelscope": "https://modelscope.cn/models/Qwen  （国内更快）",
-    "hfMirror": "https://hf-mirror.com  （设置 HF_ENDPOINT 即可）"
+    "hfMirror": "https://hf-mirror.com  （设置 HF_ENDPOINT 即可）",
+    "preferred": "先问用户开 Clash，再用 HTTPS_PROXY=http://127.0.0.1:7897 直连 huggingface.co",
+    "fallback": "hf-mirror.com（需 HF_HUB_DISABLE_XET=1）"
   }
 }

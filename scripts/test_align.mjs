@@ -69,6 +69,29 @@ const mixed = [
 const c5 = S.groupAlignedCues(mixed, { maxChars: 40 })
 ok(c5.map((c) => c.text).join('') === '甲丙', '只保留有效项', c5.map((c) => c.text))
 
+console.log('[6] 对齐结果丢标点时能补回来（真实模型就是这样）')
+const spoken = [
+  { text: '清', start: 0, end: 120 }, { text: '早', start: 120, end: 240 },
+  { text: '了', start: 240, end: 360 }, { text: '。', start: 360, end: 480 },
+]
+// 真实 aligner 不吐标点：上面故意只给三个字 + 一个句号项，模拟"少了一项"
+const realLike = spoken.slice(0, 3)
+const merged = S.bindAlignedText(realLike, '清早了。')
+ok(merged.map((m) => m.text).join('') === '清早了。', '标点被补回原文', merged.map((m) => m.text).join(''))
+ok(merged[3].start === merged[2].end, '补出的标点贴在前一字结尾', { punct: merged[3], prev: merged[2] })
+const cues6 = S.groupAlignedCues(merged, { maxChars: 40 })
+ok(cues6.length === 1 && cues6[0].text === '清早了。', '补标点后仍能正确成条', cues6)
+
+console.log('[7] 单位契约：bind 与 group 之间用毫秒，不能重复换算')
+const msItems = [
+  { text: '甲', start: 0, end: 500 },
+  { text: '乙', start: 500, end: 1200 },
+]
+const bound = S.bindAlignedText(msItems, '甲乙')
+ok(bound[1].end === 1200, 'bind 输出保持毫秒', bound[1].end)
+const cued = S.groupAlignedCues(bound, { maxChars: 40 })
+ok(Math.abs(cued[0].end - 1.2) < 1e-6, 'group 输出是秒（1200ms → 1.2s）', cued[0].end)
+
 console.log('')
 console.log(fail === 0 ? '全部通过' : fail + ' 项失败')
 process.exit(fail === 0 ? 0 : 1)

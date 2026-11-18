@@ -108,6 +108,26 @@ python bootstrap_env.py --verify
 
 ---
 
-## 六、pin 的版本可信吗
+## 六、下载模型时的网络问题
+
+**先问用户开不开 Clash**，别一上来就找镜像。本机 Clash 的混合端口是 `127.0.0.1:7897`，
+开着的时候直连 huggingface.co 是 0.3 秒，关着的时候 12 秒超时。
+
+```bash
+# 有 Clash 时
+export HTTPS_PROXY=http://127.0.0.1:7897
+export HTTP_PROXY=http://127.0.0.1:7897
+
+# 没有 Clash 才退到镜像，并且必须关掉 xet 后端
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_DISABLE_XET=1
+```
+
+`HF_HUB_DISABLE_XET=1` 这条不是可选项：xet 传输后端在 Windows 上写大文件会报
+`OSError: I/O error: 拒绝访问 (os error 5)`，小文件却正常，很容易误判成磁盘问题。
+
+---
+
+## 七、pin 的版本可信吗
 
 `base.txt` 里 38 个包全部 pin 到 2026-11-17 在真机上**实际生效**的版本，不是抄来的。生成方式是在同一进程里按 `sys.path` 顺序解析每个包真正落到哪个文件，再读它的版本 —— 所以它描述的是"这份环境到底跑了什么"，而不是"requirements 里写了什么"。

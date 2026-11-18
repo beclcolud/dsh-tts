@@ -262,7 +262,8 @@ node scripts/install.mjs --uninstall
 
 - 分配方式是"按字数比例 + 向静音吸附"，**不是强制对齐**。实测 04 段计划 2.44s、实际 2.30s，误差约 6%。
 - 影响：字幕与语音可能出现半句错位；跨语言或数字多的段落更明显。
-- **建议**：接 Qwen3-ForcedAligner 或 ASR 词级时间戳。
+- **已解决（2026-11-18，v0.2.8）**：接了 Qwen3-ForcedAligner。查证下来 `qwen_asr` 包里**本来就带** `Qwen3ForcedAligner`、ASR 也支持 `return_time_stamps=True`，之前缺的只是一个 1.84G 的权重。`voiceover({align:true})` 会把每个字对到音频上的真实时间，长句自动拆成多条字幕（实测 46 字 → 8 条，时间落在音频时长内）。
+- **两个实测坑**：① 对齐器只吐"念出来的字"，**标点全丢**（30 字原文回 27 项），要靠原文补回去才能按标点断行；② `ForcedAlignItem` 的注解写 seconds、实际产出是毫秒，按音频时长判断一次再统一。
 
 ### F. Python 环境无法一键复现
 
@@ -376,6 +377,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 错误码分级 | `server/tts_server.py` | 预期内的拒绝（缺文件 / 序号越界 / 采样率不符）返回 400 + 人话原因，不再和"服务真崩了"一起变成裸 500 |
 | 新增拼接回归 | `scripts/test_splice.py` | 自己拉起服务、用合成正弦波当素材，不需要 GPU、不需要模型；覆盖替换、时长、字幕顺延、以及三条拒绝路径 |
 | 停顿不填纯零 | `server/tts_server.py` | 规整停顿需要"补"时，原来补的是纯 0（实测 -240 dBFS）。模型自己的间隙是 -60~-66 dBFS，于是插入段听起来像"断了一下"。现在改为按两端实测底噪生成同电平柔和噪声（轻度低通 + 8ms 淡入淡出），实测填到 -66.5 dBFS，与自然间隙一致 |
+| 强制对齐 | `server/tts_server.py` + `lib/synth.js` + `lib/index.js` | 新增 `align` 端点与 `voiceover({align:true})`；字级时间经 `bindAlignedText`（补回被丢的标点）→ `groupAlignedCues`（按标点/长度/停顿断行）生成字幕。含两个单位坑的修正。测试：`test_align.mjs`（14 项，免模型）+ `test_align_model.py`（端到端） |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。
