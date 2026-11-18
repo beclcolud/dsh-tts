@@ -35,7 +35,14 @@ node scripts/install.mjs           # 装进 desktop profile
 node scripts/install.mjs --uninstall
 ```
 
-或双击 一键安装.cmd（会自己找 node、检查 DSH 是否退出、失败自动回滚）。装完重启 DSH。
+或双击 **一键安装.cmd**（Windows，会自己找 node、检查 DSH 是否退出、失败自动回滚）。
+Linux / macOS 用 `./一键安装.sh`，它只是转调同一个 `install.mjs`。
+
+装完重启 DSH。
+
+**平台**：安装、路径、编码都已按平台分支处理（Windows 用 junction，POSIX 用符号链接；
+ffmpeg concat 列表只在 Windows 上把反斜杠换成斜杠）。但**所有实测都在 Windows + NVIDIA 上做过**，
+Linux / ROCm 的代码路径写好了、分支有单测，尚未真正执行过——上 Linux 请先跑 `python bootstrap_env.py --verify`。
 
 ## 关键参数（cordis.patch.yml）
 

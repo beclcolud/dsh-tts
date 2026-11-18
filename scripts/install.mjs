@@ -58,6 +58,7 @@ pkg.dsh.profile.bundles = bundles
 
 if (dryRun) {
   log('dry-run: 将写入 ' + PKG_FILE)
+  log('dry-run: 链接方式 ' + (process.platform === 'win32' ? 'junction (mklink /J)' : '符号链接 (symlink)'))
   log(JSON.stringify({ dependencies: deps, bundles }, null, 2))
   process.exit(0)
 }
@@ -91,15 +92,34 @@ function link() {
   fs.mkdirSync(nm, { recursive: true })
   const target = path.join(nm, 'dsh-tts')
   removeLink()
-  const res = spawnSync('cmd', ['/c', 'mklink', '/J', target, ROOT], { encoding: 'utf8' })
-  if (res.status !== 0) throw new Error('创建 junction 失败：' + (res.stderr || res.stdout))
+  if (process.platform === 'win32') {
+    // Windows 上真链接要管理员权限，junction 不需要，而且 DSH 能正常解析
+    const res = spawnSync('cmd', ['/c', 'mklink', '/J', target, ROOT], { encoding: 'utf8' })
+    if (res.status !== 0) throw new Error('创建 junction 失败：' + (res.stderr || res.stdout))
+    return
+  }
+  // POSIX 用符号链接；目录链接用 'dir'
+  try {
+    fs.symlinkSync(ROOT, target, 'dir')
+  } catch (error) {
+    if (error && error.code === 'EEXIST') {
+      fs.unlinkSync(target)
+      fs.symlinkSync(ROOT, target, 'dir')
+      return
+    }
+    throw new Error('创建符号链接失败：' + (error && error.message))
+  }
 }
 
 function removeLink() {
   const target = path.join(PROFILE_DIR, 'node_modules', 'dsh-tts')
-  if (fs.existsSync(target)) {
-    try { fs.rmSync(target, { recursive: true, force: true }) } catch { /* junction may need rmdir */ }
-  }
+  let st = null
+  try { st = fs.lstatSync(target) } catch { return }
+  try {
+    // 符号链接必须用 unlink：对它 rmSync(recursive) 在 POSIX 上会删到目标目录里去
+    if (process.platform !== 'win32' && st.isSymbolicLink()) fs.unlinkSync(target)
+    else fs.rmSync(target, { recursive: true, force: true })
+  } catch { /* junction/链接可能已经不在，忽略 */ }
 }
 
 async function verify() {

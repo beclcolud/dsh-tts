@@ -292,9 +292,13 @@ node scripts/install.mjs --uninstall
 - 单进程单卡，切换模型 5–8 秒。
 - 无鉴权（仅监听 127.0.0.1，风险可接受，但别改绑定地址）。
 
-### I. Windows 专用
+### I. 跨平台
 
-- junction 安装、`taskkill`、路径分隔符、GBK 控制台编码问题（脚本里多次用 `PYTHONUTF8=1` 绕开）都是 Windows 特有，未做跨平台。
+- **安装（已做）**：`install.mjs` 按平台分支——Windows 用 `mklink /J`（junction，不需要管理员权限），POSIX 用符号链接。卸载时 POSIX 必须用 `unlink`：对符号链接调 `rmSync(recursive)` 会删到**目标目录**里去。另加了 `一键安装.sh` / `一键卸载.sh`。
+- **路径（已做）**：ffmpeg concat 列表在 Windows 上必须把反斜杠换成斜杠；Linux 上反斜杠是合法的文件名字符，替换会改坏真实路径。抽成 `lib/platform.js` 的 `ffconcatPath()`，两种平台分支都有单测。
+- **编码（已做）**：拉起 Python 时固定注入 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8`，不依赖控制台代码页。
+- **taskkill**：代码里本来就没用它——停服务一律走 HTTP `{"req":"shutdown"}`。文档里那几条"别用 taskkill"仍然成立。
+- **⚠️ 仍然只在 Windows 上验证过**：全部实测、全部测试、模型推理都在 Windows + NVIDIA 上跑。Linux / ROCm / CPU 的代码路径已经写好、平台分支有单测，但**没有真正执行过**（这台机器没装 WSL，也没有 Linux 环境）。真要上 Linux，第一步先跑 `python bootstrap_env.py --verify`。
 
 ### J. 前端只有两个点
 
@@ -391,6 +395,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 反听字幕接线 | `lib/index.js` + `lib/plan.js` + `lib/clips.js` + `server/tts_server.py` | `04S/` + 正文留空 = 反听：按标记区间切原片音频 → ASR 转写 → 强制对齐 → 字级字幕，自动并入全片 SRT（按入点偏移）。对齐不可用时退回按字数分配。`plan` 阶段把它标成"字幕（反听）"并跳过时长估算 |
 | picks.json 换键 | `lib/picks.js`（新）+ `lib/index.js` | 键从"句序"改成"句序@文本hash@音色标签"，带历史与 current 指针；旧文件自动迁移。出多版时会提示"这句在这个音色下上次选的是第几版"。测试：`test_picks.mjs`（20 项） |
 | 并发与生命周期 | `lib/guard.js`（新）+ `lib/index.js` + `server/tts_server.py` | 工具级互斥（忙则快速失败、可配等待）、`/health` 暴露 busy、修掉并发 spawn 竞态、启动即退出改为当场报错。测试：`test_guard.mjs`（13 项）+ 真实并发实测 |
+| 跨平台收敛 | `lib/platform.js`（新）+ `scripts/install.mjs` + `一键安装.sh` | 安装按平台选 junction / 符号链接（并修掉卸载时 POSIX 会删到目标目录的坑）、ffmpeg concat 路径按平台转义、编码固定注入。平台分支有单测（`test_platform.mjs` 12 项），但 Linux 实际运行仍未验证 |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。
