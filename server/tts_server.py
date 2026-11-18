@@ -1038,6 +1038,47 @@ def pick_clean_segment(wav_path: Path, target: float = 9.0) -> dict:
     return {"audio": seg, "sr": sr, "start_sec": round(start / sr, 2), "dur": round(len(seg) / sr, 2)}
 
 
+def _align_items(text: str, a, sr: int):
+    """把文本对到音频上，返回 (字级时间, 允许断行点)。
+
+    单位统一成毫秒。上游 ForcedAlignItem 的注解写 seconds，实际产出是
+    timestamp_token × timestamp_segment_time，也就是毫秒——按音频时长判断一次，
+    不让调用方去猜。
+
+    断行点：对齐器对中文逐字吐，没有词信息；先用 jieba（真分词），
+    没有则退回模型自己的 BPE token 边界（近似，会把"清早"拆开、又粘住"的地方"）。
+    """
+    model = MODELS.get("aligner")
+    res = model.align(audio=[(a, sr)], text=[text], language=["Chinese"])
+    items = []
+    for it in (getattr(res[0], "items", None) or []):
+        items.append({"text": str(getattr(it, "text", "")),
+                      "start": float(getattr(it, "start_time", 0.0)),
+                      "end": float(getattr(it, "end_time", 0.0))})
+    dur = len(a) / float(sr)
+    if items and max(r["end"] for r in items) <= dur * 1.05:
+        for r in items:              # 落在秒域，换算成毫秒
+            r["start"] *= 1000.0
+            r["end"] *= 1000.0
+
+    breaks = []
+    try:
+        import logging
+        import jieba
+        jieba.setLogLevel(logging.ERROR)
+        breaks = sorted({int(e) for (_w, _s, e) in jieba.tokenize(text) if 0 < int(e) < len(text)})
+        log("断行用 jieba，词边界 %d 个" % len(breaks))
+    except Exception as exc:
+        log("WARN jieba 不可用（%r），退回 BPE token 边界" % exc)
+        try:
+            tk = model.processor.tokenizer
+            enc = tk(text, return_offsets_mapping=True, add_special_tokens=False)
+            breaks = sorted({int(e) for (_s, e) in enc["offset_mapping"] if 0 < int(e) < len(text)})
+        except Exception as exc2:
+            log("WARN 取 token 断点也失败（不影响对齐）：%r" % exc2)
+    return items, breaks
+
+
 def handle(req: str, body: dict) -> dict:
     if req == "health":
         idle = time.time() - STATE["last_activity"]
@@ -1154,7 +1195,22 @@ def handle(req: str, body: dict) -> dict:
         for i, (st, en, txt) in enumerate(bounds, 1):
             lines.append("%d\n%s --> %s\n%s\n" % (i, fmt_ts(st), fmt_ts(en), txt))
         srt.write_text("\n".join(lines), encoding="utf-8")
-        return {"text": text, "cues": [{"start": round(st, 3), "end": round(en, 3), "text": t} for st, en, t in bounds], "srt": str(srt)}
+        out = {"text": text,
+               "cues": [{"start": round(st, 3), "end": round(en, 3), "text": t} for st, en, t in bounds],
+               "srt": str(srt)}
+        if body.get("timestamps"):
+            # 时间戳版：先卸掉 ASR 再载对齐器（8G 显存装不下两个）。
+            # 上面按字数分配的那份 srt 保留着，对齐失败时还能用。
+            try:
+                MODELS.free_all()
+                items, breaks = _align_items(text, a, sr)
+                out["items"] = items
+                out["breaks"] = breaks
+                out["timestamps"] = True
+            except Exception as exc:
+                out["timestamps_error"] = str(exc)[:300]
+                log("WARN asr_subs 取时间戳失败，返回按字数分配的结果：%r" % exc)
+        return out
 
     if req == "align":
         """强制对齐：把文本里的每个字/词对到音频上的真实时间。
@@ -1166,44 +1222,9 @@ def handle(req: str, body: dict) -> dict:
         audio_path = Path(body["audio"])
         text = str(body["text"])
         a, sr = load_wav(audio_path)
-        model = MODELS.get("aligner")
-        res = model.align(audio=[(a, sr)], text=[text],
-                          language=[body.get("language") or "Chinese"])
-        items = []
-        if res:
-            for it in (getattr(res[0], "items", None) or []):
-                items.append({"text": str(getattr(it, "text", "")),
-                              "start": float(getattr(it, "start_time", 0.0)),
-                              "end": float(getattr(it, "end_time", 0.0))})
-        dur = len(a) / float(sr)
-        if items and max(r["end"] for r in items) <= dur * 1.05:
-            for r in items:          # 落在秒域，换算成毫秒
-                r["start"] *= 1000.0
-                r["end"] *= 1000.0
-
-        # 顺带给出"可以在哪里断行"。对齐器对中文是逐字吐的，没有词信息，所以要另找。
-        # 首选 jieba（真正的分词：清早|的|菜市场|是|最|热闹|的|地方）；
-        # BPE token 边界只是近似——实测会把"清早"拆开、又会把"的地方"粘住，
-        # 既可能在词内断行，又断不了该断的地方。jieba 缺失时才退回 BPE。
-        breaks = []
-        try:
-            import logging
-            import jieba
-            jieba.setLogLevel(logging.ERROR)
-            ends = {int(e) for (_w, _s, e) in jieba.tokenize(text) if 0 < int(e) < len(text)}
-            breaks = sorted(ends)
-            log("断行用 jieba，词边界 %d 个" % len(breaks))
-        except Exception as exc:
-            log("WARN jieba 不可用（%r），退回 BPE token 边界" % exc)
-            try:
-                tk = model.processor.tokenizer
-                enc = tk(text, return_offsets_mapping=True, add_special_tokens=False)
-                breaks = sorted({int(e) for (_s, e) in enc["offset_mapping"] if 0 < int(e) < len(text)})
-            except Exception as exc2:
-                log("WARN 取 token 断点也失败（不影响对齐）：%r" % exc2)
-
-        return {"items": items, "count": len(items), "unit": "ms", "dur": round(dur, 3),
-                "breaks": breaks}
+        items, breaks = _align_items(text, a, sr)
+        return {"items": items, "count": len(items), "unit": "ms",
+                "dur": round(len(a) / float(sr), 3), "breaks": breaks}
 
     if req == "asr":
         model = MODELS.get("asr")

@@ -8,7 +8,7 @@
 | 工具 | 用途 |
 | --- | --- |
 | voiceover | 一段文案 → mp3 + 逐句 SRT（+ 可选 mp4 成片）。音色支持预设名 / 中文描述造音色 / 参考音视频克隆 / 音色库名 |
-| voiceover_timeline | 读 PR 导出的 FCP XML，按序列上的范围标记（01/02…）与外部文案编号对应，逐段配音并生成整片对齐字幕。两阶段：stage=plan 预检表 → stage=run 合成 |
+| voiceover_timeline | 读 PR 导出的 FCP XML，按序列上的范围标记（01/02…）与外部文案编号对应，逐段配音并生成整片对齐字幕。两阶段：stage=plan 预检表 → stage=run 合成。**文案写 `04S/` 且正文留空 = 反听**：从原片切音频 → ASR 转写 → 强制对齐 → 真实时间字幕 |
 | voiceover_retakes | 按句重录：segment=N, takes=3 出多版，测内部停顿标异常；use=K 记录采用版到 picks.json |
 
 ## 架构

@@ -249,7 +249,8 @@ node scripts/install.mjs --uninstall
 
 - **现状**：服务端 `asr_subs` 可用；`lib/clips.js` 能从 XML 取媒体片段并按区间去重；但**工具里没有入口**，这次是在 tools 之外用 `scripts/one-off/build_seg_audio.mjs` + 手工 curl + `scripts/one-off/merge_srt.py` 拼起来的。
 - **为什么没接**：当时赶交付，先手工跑通再说。
-- **建议**：在 `voiceover_timeline` 的 run 流程里，对 `mode=subtitle` 且文案为空的段，自动走 `clips → ffmpeg 切片 → asr_subs → 偏移合并`。
+- **已解决（2026-11-18，v0.2.10）**：就按上面建议做的。文案里写 `04S/` 且**正文留空**，run 时就自动走 `clips.js 取片段 → ffmpeg 切出这段 → asr_subs(timestamps) → 偏移合并进全片 SRT`。用真实项目（`序列 01.xml`，标记 04 = 151.76~161.48s）实测：切出 9.7 秒音频，转写 + 强制对齐，出 3 条字级字幕，全片 SRT 按入点偏移正确。
+- 顺带把 `asr_subs` 升级成支持 `timestamps`：先转写、卸掉 ASR 再载对齐器，拿字级时间；对齐器不可用时自动退回原来"按字数分配"的结果并在日志里说明。
 
 ### D. 时间轴工具只支持一种输入格式
 
@@ -383,6 +384,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 新增拼接回归 | `scripts/test_splice.py` | 自己拉起服务、用合成正弦波当素材，不需要 GPU、不需要模型；覆盖替换、时长、字幕顺延、以及三条拒绝路径 |
 | 停顿不填纯零 | `server/tts_server.py` | 规整停顿需要"补"时，原来补的是纯 0（实测 -240 dBFS）。模型自己的间隙是 -60~-66 dBFS，于是插入段听起来像"断了一下"。现在改为按两端实测底噪生成同电平柔和噪声（轻度低通 + 8ms 淡入淡出），实测填到 -66.5 dBFS，与自然间隙一致 |
 | 强制对齐 | `server/tts_server.py` + `lib/synth.js` + `lib/index.js` | 新增 `align` 端点与 `voiceover({align:true})`；字级时间经 `bindAlignedText`（补回被丢的标点）→ `groupAlignedCues`（按标点/长度/停顿断行）生成字幕。含两个单位坑的修正。测试：`test_align.mjs`（14 项，免模型）+ `test_align_model.py`（端到端） |
+| 反听字幕接线 | `lib/index.js` + `lib/plan.js` + `lib/clips.js` + `server/tts_server.py` | `04S/` + 正文留空 = 反听：按标记区间切原片音频 → ASR 转写 → 强制对齐 → 字级字幕，自动并入全片 SRT（按入点偏移）。对齐不可用时退回按字数分配。`plan` 阶段把它标成"字幕（反听）"并跳过时长估算 |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。

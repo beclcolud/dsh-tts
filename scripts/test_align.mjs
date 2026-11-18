@@ -118,6 +118,16 @@ const pc = S.groupAlignedCues(p, { maxChars: 2, breakable: [2] })
 ok(!pc.some((c) => /^[，。！？；：、]$/u.test(c.text)), '没有只有标点的字幕', pc.map((c) => c.text))
 ok(pc.map((c) => c.text).join('') === '甲乙，丙', '内容不丢', pc.map((c) => c.text))
 
+console.log('[10] 停顿断行不会切出一个字的字幕')
+const shortItems = [
+  { text: '国', start: 240, end: 320 },
+  { text: '产', start: 880, end: 960 },
+  { text: '乡', start: 960, end: 1040 },
+  { text: '村', start: 1040, end: 1120 },
+]
+const sc = S.groupAlignedCues(shortItems, { maxChars: 20, maxGapMs: 350, minChars: 2 })
+ok(sc.length === 1 && sc[0].text === '国产乡村', '单字后的大停顿不单独断行', sc)
+
 console.log('')
 console.log(fail === 0 ? '全部通过' : fail + ' 项失败')
 process.exit(fail === 0 ? 0 : 1)
