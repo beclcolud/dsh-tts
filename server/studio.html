@@ -43,6 +43,7 @@
   <button class="tab on" data-tab="task">任务</button>
   <button class="tab" data-tab="history">历史</button>
   <button class="tab" data-tab="bank">音色库</button>
+  <button class="tab" data-tab="queue">队列</button>
   <button class="tab" data-tab="config">参数</button>
 </div>
 <div id="err"></div>
@@ -50,7 +51,7 @@
 <script>
 (function () {
   var BASE = '/api/dsh-tts/'
-  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, saving: false, saveMsg: '', loading: false, error: '', creating: false }
+  var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { text: '', voice: '', title: '' }, saving: false, saveMsg: '', loading: false, error: '', creating: false }
   function el(id) { return document.getElementById(id) }
   function api(name, opt) {
     return fetch(BASE + name, Object.assign({ cache: 'no-store' }, opt || {})).then(function (r) {
@@ -98,6 +99,8 @@
           + '<div class="dim" style="margin-top:6px">' + (st.online ? '没有正在进行的任务。' : '查看历史与音色库只读文件，不会启动服务；改名/删除/新建音色时才需要。') + '</div></div>'
       }
       h += '<div class="card"><div class="dim">配音请在对话里让助手调用 voiceover；这里看进度、取消、翻产物和音色库。</div></div>'
+    } else if (state.tab === 'queue') {
+      h += renderQueue()
     } else if (state.tab === 'config') {
       h += renderConfig()
     } else if (state.tab === 'history') {
@@ -136,6 +139,43 @@
     }
     el('view').innerHTML = h
     bind()
+  }
+
+  var JOB_LABEL = { queued: '排队中', running: '正在合成', done: '完成', failed: '失败' }
+
+  function renderQueue() {
+    var q = state.queue
+    if (!q || !q.jobs) return '<div class="empty">读取中…</div>'
+    var c = q.counts || {}
+    var h = '<div class="row" style="margin-bottom:8px"><span class="dim">共 ' + (c.total || 0) + ' 条（排队 ' + (c.queued || 0)
+      + ' / 完成 ' + (c.done || 0) + ' / 失败 ' + (c.failed || 0) + '）' + (q.paused ? ' · 已暂停' : '') + '</span><span class="grow"></span>'
+      + '<button class="act" id="qpause">' + (q.paused ? '继续' : '暂停') + '</button>'
+      + '<button class="act" id="qstop"' + (q.running ? '' : ' disabled') + '>停止当前</button>'
+      + '<button class="act" id="qclear">清空未完成</button></div>'
+
+    h += '<div class="card"><div class="dim" style="margin-bottom:4px">新任务</div>'
+      + '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
+      + '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认）" style="max-width:46%">'
+      + '<input type="text" id="qtitle" value="' + esc(state.draft.title) + '" placeholder="文件名（留空自动）" style="max-width:46%">'
+      + '<button class="act" id="qadd">加入队列</button></div></div>'
+
+    if (!q.jobs.length) return h + '<div class="empty">队列是空的。</div>'
+    h += '<div class="card">'
+    q.jobs.forEach(function (job) {
+      var color = job.status === 'running' ? 'var(--accent)' : job.status === 'done' ? 'var(--ok)' : job.status === 'failed' ? 'var(--err)' : 'var(--dim)'
+      var title = job.title || (job.text.length > 40 ? job.text.slice(0, 40) + '…' : job.text)
+      h += '<div class="item"><div class="row"><i class="dot" style="background:' + color + '"></i>'
+        + '<span class="name" style="flex:1" title="' + esc(job.text) + '">' + esc(title) + '</span>'
+        + '<span class="dim">' + esc(JOB_LABEL[job.status] || job.status) + '</span>'
+        + (job.status === 'failed' ? '<button class="act qretry" data-id="' + job.id + '">重试</button>' : '')
+        + (job.status === 'running' ? '' : '<button class="act qdel" data-id="' + job.id + '">删除</button>')
+        + '</div>'
+        + (job.error ? '<div class="dim" style="color:var(--err)">' + esc(job.error) + '</div>' : '')
+        + (job.files && job.files.length ? '<div class="dim">产出：' + esc(job.files.map(function (f) { return f.split(/[\\/]/).pop() }).join('、')) + '</div>' : '')
+        + '</div>'
+    })
+    h += '</div>'
+    return h
   }
 
   function renderConfig() {
@@ -216,7 +256,40 @@
     })
   }
 
+  function qpost(op, extra) {
+    post('queue.json', Object.assign({ op: op }, extra || {})).then(function (j) {
+      if (j && j.jobs) state.queue = j
+      state.error = (j && j.ok === false) ? (j.error || '操作失败') : ''
+      render()
+    }).catch(function (e) { state.error = String(e && e.message ? e.message : e); render() })
+  }
+
   function bind() {
+    var qt = el('qtext')
+    if (qt) qt.oninput = function () { state.draft.text = qt.value }
+    var qv = el('qvoice')
+    if (qv) qv.oninput = function () { state.draft.voice = qv.value }
+    var qti = el('qtitle')
+    if (qti) qti.oninput = function () { state.draft.title = qti.value }
+    var qp = el('qpause')
+    if (qp) qp.onclick = function () { qpost(state.queue && state.queue.paused ? 'resume' : 'pause') }
+    var qs = el('qstop')
+    if (qs) qs.onclick = function () { qpost('stop') }
+    var qc = el('qclear')
+    if (qc) qc.onclick = function () { qpost('clear') }
+    var qa = el('qadd')
+    if (qa) qa.onclick = function () {
+      var text = state.draft.text.trim()
+      if (!text) { state.error = '先写文案再加入队列'; render(); return }
+      qpost('add', { text: text, voice: state.draft.voice.trim(), title: state.draft.title.trim() })
+      state.draft = { text: '', voice: state.draft.voice, title: '' }
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.qretry'), function (b) {
+      b.onclick = function () { qpost('retry', { id: b.getAttribute('data-id') }) }
+    })
+    Array.prototype.forEach.call(document.querySelectorAll('.qdel'), function (b) {
+      b.onclick = function () { qpost('remove', { id: b.getAttribute('data-id') }) }
+    })
     var sv = el('savecfg')
     if (sv) sv.onclick = saveConfig
     var c = el('cancel')
@@ -261,17 +334,27 @@
       ? api('outputs.json').then(function (j) { if (j.ok === false) state.error = j.error || '读取失败'; else state.files = j.files || [] })
       : state.tab === 'bank'
         ? api('bank.json').then(function (j) { if (j.ok === false) state.error = j.error || '读取失败'; else state.bank = j.entries || {} })
-        : state.tab === 'config'
-          ? api('config.json').then(function (j) { if (j.ok === false) state.error = j.error || '读取失败'; else state.config = j })
-          : Promise.resolve()
+        : state.tab === 'queue'
+          ? api('queue.json').then(function (j) { if (j.ok === false) state.error = j.error || '读取失败'; else state.queue = j })
+          : state.tab === 'config'
+            ? api('config.json').then(function (j) { if (j.ok === false) state.error = j.error || '读取失败'; else state.config = j })
+            : Promise.resolve()
     job.catch(function (e) { state.error = '请求失败：' + (e && e.message ? e.message : e) })
       .then(function () { state.loading = false; render() })
   }
 
   function poll() {
-    api('status.json').then(function (j) { state.status = j })
-      .catch(function () { state.status = { online: false } })
-      .then(function () { render() })
+    Promise.all([
+      api('status.json').then(function (j) { state.status = j }).catch(function () { state.status = { online: false } }),
+      api('queue.json').then(function (j) { state.queue = j }).catch(function () { /* 队列读不到不影响其它页 */ }),
+    ]).then(function () { if (!typingInView()) render() })
+  }
+
+  // 面板每 2 秒重渲染一次；正在输入时跳过，否则光标和内容会被冲掉
+  function typingInView() {
+    var a = document.activeElement
+    if (!a || (a.tagName !== 'INPUT' && a.tagName !== 'TEXTAREA')) return false
+    return !!(a.closest && a.closest('#view'))
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
