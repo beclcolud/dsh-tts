@@ -339,7 +339,7 @@ node scripts/install.mjs --uninstall
 
 ### K. 测试与清理
 
-- 现有测试：`selftest.mjs`、`test_parsers.mjs`、`test_retakes.mjs`、`test_timeline_run.mjs`、`test_timeline_tool.mjs`。
+- 现有测试（17 个 `test_*.mjs` + `selftest.mjs`）：其中 15 个**不需要 GPU**，秒级跑完（解析 / 分批 / 拼接 / 选版 / 互斥 / 队列 / 平台 / 设置 / 对齐 / 语言 / 页面 / 默认音色）；`test_retakes.mjs` 与 `test_timeline_run.mjs` 会真起 Python 服务，**在 DSH 沙箱里会因 `Permission denied` 读不到 `pylibs` 而失败**，要在宿主上跑。
 - **没有 CI，没有回归基线**；XML 解析只在自造 fixture + 一个真实项目上验证过。
 - `scripts/` 下原有 **85 个**文件，其中一次性调试脚本（`dump_*.py`、`patch_*.py`、`run_*.mjs`、`render_*.py`）**已归档到 `scripts/one-off/`（72 个）**，根上只留安装、测试、音色库维护，以及 `md_to_docx.py`（Markdown → Word 生成器），**建议归档到 `scripts/one-off/` 或删除**，只留 `install.mjs`、`selftest.mjs`、`test_*.mjs`、`rename_bank.py`、`set_voice_flags.py`。
 
@@ -468,3 +468,32 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 <work>/dsh-tts
 **新增测试**：`test_lang_split.mjs`（5 项）、`test_settings_paths.mjs`（10 项）、`test_nagisa_stub.py`（13 项）。
 
 **已知限制**：英/日断词是近似（日文没有真形态素分析）；翻译是通用模型，术语需人工校对；NLLB 为 CC-BY-NC-4.0，**禁止商用**。
+
+---
+
+## 十五、接手第一批（2026-11-18）：默认音色解析
+
+**先核对了实机状态，再修了一个"不传 voice 就全挂"的缺陷。**
+
+| 现象 | 根因 | 处置 |
+| --- | --- | --- |
+| `voiceover({ text })` 不传 `voice` 报 `Unsupported speakers: ['新闻联播音色']`；显式传同名就正常 | `resolveVoice()` 的 `voice === ''` 分支自己造 `{kind:'custom',voice:{speaker:defaultVoice}}`，**跳过了音色库查询**。本机 `defaultVoice` 是库里的克隆音色（`kind:'base'`），被当成 CustomVoice 预设名 | 默认分支改为拿默认名递归走完整解析（预设 → 音色库 → 参考素材 → 描述），标签追加「（默认）」 |
+
+- **为什么漏了**：时间轴工具传的是 `args.voice || cfg.defaultVoice`（默认值显式传入，走完整解析）；
+  主工具 `voiceover` 传的是裸 `args.voice`。同一份配置，两个工具两种结果。
+- **新增测试** `scripts/test_default_voice.mjs`：17 项，起一个本地假 HTTP 服务顶替 `bank_list`，
+  不需要 GPU / 模型 / 服务。覆盖：库条目当默认、预设当默认、默认留空、显式传库名、显式传预设、落回描述型。
+- **生效方式**：`lib/*.js` 改动要**重启 DSH**才生效；本次修复在旧进程里不会出现，但显式传 `voice` 一直可用。
+
+**验证基线（本机实测，2026-11-18）**
+
+| 项 | 结果 |
+| --- | --- |
+| 插件安装 | `~/.dsh/profiles/desktop/node_modules/dsh-tts` → 仓库的软链 |
+| 服务 | 未常驻（空闲自退）；工具调用自动拉起，实测 2.5s 载入 custom、3.2s 载入 base |
+| 端到端合成 | `voice:'新闻联播音色'` → 1.74 秒 mp3 + srt，ASR 质检 1.0 |
+| 免 GPU 测试 | 15 个脚本全部通过 |
+| 需 GPU 的测试 | `test_retakes` / `test_timeline_run` 在 DSH 沙箱内报 `Permission denied: pylibs/librosa/__init__.py`（沙箱限制，不是代码问题） |
+| git | 干净、与 `origin/main` 同步、已打 v0.3.1 |
+
+本节只动 `resolveVoice` 的默认分支，**没碰拼接参数、没碰模型路线**；第九节其余条目状态不变。
