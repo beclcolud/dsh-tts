@@ -65,10 +65,15 @@ async function runPage(opts) {
     activeElement: null,
     body: { style: {} },
   }
+  const fetched = []
   const fetchStub = (url) => {
     const u = String(url)
+    fetched.push(u)
     if (u.indexOf('status.json') >= 0) {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(opts.status) })
+    }
+    if (u.indexOf('config.json') >= 0) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(opts.other || { ok: true }) })
     }
     if (u.indexOf('queue.json') >= 0 && opts.queue404) {
       return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) })
@@ -80,11 +85,17 @@ async function runPage(opts) {
   run(windowStub, document, fetchStub, () => 0, (fn) => { try { fn() } catch { /* ignore */ } },
     function () { return { play: () => Promise.resolve() } }, { clipboard: { writeText: () => Promise.resolve() } })
   await new Promise((r) => setTimeout(r, 80))
+  els.fetched = fetched
   return els
 }
 
 console.log('[2] 正常运行（新插件）')
-const a = await runPage({ status: { ok: true, online: false, loaded: null, idleS: 1, idleShutdownMs: 300000, apiVersion: 2, busyReq: null, busyS: null, progress: null } })
+const a = await runPage({
+  status: { ok: true, online: false, loaded: null, idleS: 1, idleShutdownMs: 300000, apiVersion: 2, busyReq: null, busyS: null, progress: null, defaultVoice: '新闻联播音色' },
+  other: { ok: true, voiceOptions: [{ value: '新闻联播音色', group: '音色库' }, { value: 'Serena', group: '预设' }] },
+})
+ok(a.fetched.some((u) => /config\.json/.test(u)), '启动时读了音色候选', a.fetched),
+ok(html.indexOf('datalist id="qvoiceopts"') > 0, '队列表单有音色候选挂点')
 ok(a.sub.textContent !== '' && a.sub.textContent.indexOf('正在连接服务') < 0, '初始文案被替换', a.sub.textContent)
 ok(a.view.innerHTML.length > 0, '视图区有内容')
 ok((a.compat.innerHTML || '') === '', '新版插件不显示兼容提示', a.compat.innerHTML)

@@ -55,6 +55,7 @@
   // 页面需要的接口版本；插件启动时会在 status 里回自己的版本
   var NEED_API = 2
   var state = { tab: 'task', status: null, files: [], bank: {}, config: null, queue: null, draft: { type: 'text', text: '', textName: '', voice: '', title: '', xmlName: '', scriptName: '', sequence: '' },
+    voiceOptions: [],
     upload: { xmlText: '', scriptText: '' }, saving: false, saveMsg: '', loading: false, error: '', creating: false }
   function el(id) { return document.getElementById(id) }
   function api(name, opt) {
@@ -214,7 +215,10 @@
         + '<span class="dim">' + (state.draft.textName ? esc(state.draft.textName) : '可选') + '</span></div>'
         + '<textarea id="qtext" placeholder="要配音的文案，可多段；按句自动切分（也可以从上面的文件导入）" style="width:100%;min-height:64px;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:inherit;resize:vertical">' + esc(state.draft.text) + '</textarea>'
     }
-    h += '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认）" style="max-width:46%">'
+    h += '<div class="row" style="margin-top:6px"><input type="text" id="qvoice" list="qvoiceopts" value="' + esc(state.draft.voice) + '" placeholder="音色（留空用默认：' + esc((state.status && state.status.defaultVoice) || '未设置') + '）" style="max-width:46%">'
+      + '<datalist id="qvoiceopts">' + (state.voiceOptions || []).map(function (o) {
+        return '<option value="' + esc(o.value) + '">' + esc(o.group) + '</option>'
+      }).join('') + '</datalist>'
       + '<input type="text" id="qtitle" value="' + esc(state.draft.title) + '" placeholder="' + (isPr ? '输出目录名（留空自动）' : '文件名（留空自动）') + '" style="max-width:46%">'
       + (isPr ? '<input type="text" id="qseq" value="' + esc(state.draft.sequence) + '" placeholder="序列号" style="max-width:70px">' : '')
       + '<button class="act" id="qadd">加入队列</button></div>'
@@ -433,7 +437,7 @@
       b.onclick = function () {
         var name = b.getAttribute('data-n')
         if (!window.confirm('确定删除「' + name + '」？（只删记录，参考音频不动）')) return
-        post('bank.json', { op: 'delete', name: name }).then(function (j) { if (!j.ok) state.error = j.error || '删除失败'; load() })
+        post('bank.json', { op: 'delete', name: name }).then(function (j) { if (!j.ok) state.error = j.error || '删除失败'; load(); loadVoiceOptions() })
       }
     })
     var cr = el('create')
@@ -445,7 +449,7 @@
       post('bank.json', { op: 'create', prompt: prompt }).then(function (j) {
         state.creating = false
         if (!j.ok) state.error = j.error || '新建失败'
-        load()
+        load(); loadVoiceOptions()
       }).catch(function (e) { state.creating = false; state.error = String(e.message || e); render() })
     }
   }
@@ -496,6 +500,15 @@
 
   // 注意：不要绑 Esc。它在本应用里是全局快捷键，会直接退出 DSH，
   // 而不是触发这里的返回——用顶部左上角那个按钮就行。
+  // 音色候选（预设 + 音色库）：只读文件，不启动服务；建/删音色后再拉一次
+  function loadVoiceOptions() {
+    return api('config.json').then(function (j) {
+      if (j && j.ok !== false && j.voiceOptions) state.voiceOptions = j.voiceOptions
+      if (!typingInView()) render()
+    }).catch(function () { /* 拿不到就只是个普通输入框 */ })
+  }
+
+  loadVoiceOptions()
   poll()
   setInterval(poll, 2000)
 })()
