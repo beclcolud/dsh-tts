@@ -283,9 +283,13 @@ node scripts/install.mjs --uninstall
 
 ### H. 服务生命周期
 
-- 无守护进程：服务崩了要等下一次工具调用把它拉起；端口被占时能抢占（会先发 shutdown）。
-- 单进程单卡，切换模型 5–8 秒，期间请求排队。
-- 无并发控制：两个工具同时调用会串行，长任务期间第二个请求会等很久。
+- **并发控制（2026-11-18 已做）**：三个工具外面加了一层进程内互斥（`lib/guard.js`）。忙的时候默认**立即失败**并说清楚谁在跑、跑了多久；想排队就把 `busyWaitMs` 调大。实测第二个请求 **0ms** 被拒。
+- **忙状态可见（已做）**：服务端 `/health` 增加 `busy` / `busy_req` / `busy_s`；插件状态端点一并带出。实测合成中能看到 `busy:true, busy_req:"say", busy_s:6.1`。
+- **并发拉起竞态（已修）**：两个调用同时发现服务没起时，原来会各自 spawn——第二个抢不到端口就退出，它的 exit 回调还会把正在用的引用清掉。现在用 `SERVICE.starting` 串起来只 spawn 一次；子进程退出时只清自己那次的引用。
+- **启动即退出会立刻报错（已修）**：端口被占 / pythonPath 不对 / 依赖缺失时，原来白等满 90 秒才超时；现在当场报出退出码和原因。
+- **更正**：原文说"端口被占时能抢占（会先发 shutdown）"**不准确**。代码里的 shutdown 只在"服务疑似被污染、重启后重试一次"那条路径上（voiceover 的 retry），并不存在端口占用时的自动抢占。
+- 仍然没做：进程崩溃后没有自动重启（要等下一次工具调用拉起，这是原有取舍）；端口被别的程序占用时不会抢占，只会报错。
+- 单进程单卡，切换模型 5–8 秒。
 - 无鉴权（仅监听 127.0.0.1，风险可接受，但别改绑定地址）。
 
 ### I. Windows 专用
@@ -386,6 +390,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-tts    # 应是指向 E:/<工作区>
 | 强制对齐 | `server/tts_server.py` + `lib/synth.js` + `lib/index.js` | 新增 `align` 端点与 `voiceover({align:true})`；字级时间经 `bindAlignedText`（补回被丢的标点）→ `groupAlignedCues`（按标点/长度/停顿断行）生成字幕。含两个单位坑的修正。测试：`test_align.mjs`（14 项，免模型）+ `test_align_model.py`（端到端） |
 | 反听字幕接线 | `lib/index.js` + `lib/plan.js` + `lib/clips.js` + `server/tts_server.py` | `04S/` + 正文留空 = 反听：按标记区间切原片音频 → ASR 转写 → 强制对齐 → 字级字幕，自动并入全片 SRT（按入点偏移）。对齐不可用时退回按字数分配。`plan` 阶段把它标成"字幕（反听）"并跳过时长估算 |
 | picks.json 换键 | `lib/picks.js`（新）+ `lib/index.js` | 键从"句序"改成"句序@文本hash@音色标签"，带历史与 current 指针；旧文件自动迁移。出多版时会提示"这句在这个音色下上次选的是第几版"。测试：`test_picks.mjs`（20 项） |
+| 并发与生命周期 | `lib/guard.js`（新）+ `lib/index.js` + `server/tts_server.py` | 工具级互斥（忙则快速失败、可配等待）、`/health` 暴露 busy、修掉并发 spawn 竞态、启动即退出改为当场报错。测试：`test_guard.mjs`（13 项）+ 真实并发实测 |
 | 环境可复现 | `requirements/` + `bootstrap_env.py` + `models.manifest.json` | 38 个包逐包 pin；Windows/Linux × NVIDIA/AMD/CPU 的矩阵与真实约束（**Windows+AMD 没有 ROCm wheel，只能退 CPU**）；transformers 冲突做成"先试 4.57.6、自检不过回退 4.57.3"；模型只做清单与字节数校验，不自动下 11G。`sox` 桩从依赖目录收进 `server/vendor/`——它原来不在版本库里，是"换机器复现不了"的一环 |
 
 仍然没做（继续留在第九节）：真正的切片拼回（A）、`picks.json` 键（B）、反听字幕接线（C）、强制对齐（E）、`requirements.txt`（F）。

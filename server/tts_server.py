@@ -48,7 +48,8 @@ _bootstrap_tmp()
 
 CONFIG: dict = {}
 LOCK = threading.Lock()
-STATE: dict = {"last_activity": time.time(), "loaded": None, "started": time.time()}
+STATE: dict = {"last_activity": time.time(), "loaded": None, "started": time.time(),
+                  "busy_req": None, "busy_since": None}
 
 
 def log(*parts):
@@ -1090,10 +1091,15 @@ def _align_items(text: str, a, sr: int):
 def handle(req: str, body: dict) -> dict:
     if req == "health":
         idle = time.time() - STATE["last_activity"]
+        busy_since = STATE.get("busy_since")
         return {"ok": True, "loaded": STATE["loaded"],
                 "uptime_s": round(time.time() - STATE["started"], 1),
                 "idle_s": round(idle, 1),
-                "idle_shutdown_ms": CONFIG.get("idle_shutdown_ms", 300000)}
+                "idle_shutdown_ms": CONFIG.get("idle_shutdown_ms", 300000),
+                # 忙不忙要让外面看得见：原来第二个请求只会静默排队
+                "busy": LOCK.locked(),
+                "busy_req": STATE.get("busy_req"),
+                "busy_s": round(time.time() - busy_since, 1) if busy_since else None}
     if req == "shutdown":
         threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
         return {"ok": True, "bye": True}
@@ -1276,8 +1282,14 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
             req = body.pop("req", "")
-            with LOCK:
-                result = handle(req, body)
+            STATE["busy_req"] = req
+            STATE["busy_since"] = time.time()
+            try:
+                with LOCK:
+                    result = handle(req, body)
+            finally:
+                STATE["busy_req"] = None
+                STATE["busy_since"] = None
             self._send(200, {"ok": True, **result})
         except ValueError as e:
             # 预期内的拒绝（缺文件、句子越界、采样率不符）：400，别和"服务真的崩了"混在一起

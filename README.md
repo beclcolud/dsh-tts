@@ -49,6 +49,7 @@ node scripts/install.mjs --uninstall
 | diction | true | 附加「咬字清晰、不要连读」指令 |
 | blur_mode / blur_sep / blur_words | punct / 、 / [答案, 牛奶] | 易粘连词的断字方式 |
 | idleShutdownMs | 300000 | 服务空闲多久自动退出（0 = 常驻） |
+| busyWaitMs | 0 | 忙的时候最多等多久（毫秒）。0 = 立即失败并提示，调大就排队 |
 | seamPolicy | target | 句间停顿策略：target 按句末标点规整到设定值 / current 只看模型给多少 |
 | seamPauses | {'。':180, '！':200, '？':200, '；':140} | 各句末标点对应的停顿时长（毫秒），可按语气场合调 |
 
